@@ -1,0 +1,56 @@
+# Virtuella miljöer
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Python-cache och kompilerade filer
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution och paketering
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Loggar och databaser
+*.log
+*.sqlite
+*.db
+
+# Miljövariabler och känslig data
+.env
+.SECRET
+*.key
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# VS Code 
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Operativsystem
+.DS_Store
+Thumbs.db
+cDocs
+.mcp.json
