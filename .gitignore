@@ -54,3 +54,4 @@ wheels/
 Thumbs.db
 cDocs
 .mcp.json
+.claude

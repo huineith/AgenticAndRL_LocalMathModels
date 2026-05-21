@@ -1,9 +1,17 @@
 import json
 import torch
 from datasets import load_dataset, Dataset
-from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
-from trl import SFTTrainer, SFTConfig, GRPOTrainer, GRPOConfig
-from unsloth import FastLanguageModel
+from transformers import (
+    Trainer,
+    TrainingArguments,
+    DataCollatorForLanguageModeling,
+    TrainerCallback,
+    TrainerControl,
+    TrainerState,
+)
+from unsloth import FastLanguageModel, PatchFastRL
+PatchFastRL()
+from unsloth import GRPOTrainer, GRPOConfig
 
 from rewards import compute_reward
 from utils import extract_tagged_answer, extract_gsm8k_ground_truth
@@ -38,33 +46,16 @@ def format_prompt(question: str, tokenizer) -> str:
     )
 
 
-def prepare_grpo_dataset(train_slice, tokenizer) -> Dataset:
+def prepare_grpo_dataset(train_slice) -> Dataset:
     def map_fn(example):
         return {
-            "prompt": format_prompt(example["question"], tokenizer),
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user",   "content": example["question"]},
+            ],
             "solution": example["answer"],
         }
     return train_slice.map(map_fn, remove_columns=train_slice.column_names, num_proc=1)
-
-
-def prepare_sft_dataset(warmup_path: str, tokenizer) -> Dataset:
-    with open(warmup_path) as f:
-        examples = json.load(f)
-    required_keys = {"question", "response"}
-    for i, ex in enumerate(examples):
-        missing = required_keys - ex.keys()
-        if missing:
-            raise ValueError(f"warmup_data.json entry {i} missing keys: {missing}")
-    formatted = []
-    for ex in examples:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": ex["question"]},
-            {"role": "assistant", "content": ex["response"]},
-        ]
-        text = tokenizer.apply_chat_template(messages, tokenize=False)
-        formatted.append({"text": text})
-    return Dataset.from_list(formatted)
 
 
 def evaluate_on_validation(model, tokenizer, val_slice) -> float:
@@ -142,6 +133,7 @@ def load_base_model(model_name: str):
         max_seq_length=MAX_SEQ_LENGTH,
         dtype=None,
         load_in_4bit=True,
+        fast_inference=True,
     )
     model = FastLanguageModel.get_peft_model(
         model,
@@ -158,24 +150,56 @@ def load_base_model(model_name: str):
 
 
 def run_sft_warmup(model, tokenizer, warmup_path: str, save_path: str):
-    sft_dataset = prepare_sft_dataset(warmup_path, tokenizer)
-    trainer = SFTTrainer(
+    with open(warmup_path) as f:
+        examples = json.load(f)
+
+    required_keys = {"question", "response"}
+    for i, ex in enumerate(examples):
+        missing = required_keys - ex.keys()
+        if missing:
+            raise ValueError(f"warmup_data.json entry {i} missing keys: {missing}")
+
+    texts = []
+    for ex in examples:
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": ex["question"]},
+            {"role": "assistant", "content": ex["response"]},
+        ]
+        texts.append(tokenizer.apply_chat_template(messages, tokenize=False))
+
+    raw_dataset = Dataset.from_dict({"text": texts})
+
+    def tokenize_fn(batch):
+        result = tokenizer(
+            batch["text"],
+            truncation=True,
+            max_length=MAX_SEQ_LENGTH,
+            padding=False,
+        )
+        result["labels"] = result["input_ids"].copy()
+        return result
+
+    tokenized = raw_dataset.map(tokenize_fn, batched=True, remove_columns=["text"])
+    tokenized.set_format("torch")
+
+    collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+
+    trainer = Trainer(
         model=model,
-        processing_class=tokenizer,
-        train_dataset=sft_dataset,
-        args=SFTConfig(
-            dataset_text_field="text",
+        args=TrainingArguments(
+            output_dir=save_path + "_warmup_tmp",
             per_device_train_batch_size=2,
             gradient_accumulation_steps=2,
             num_train_epochs=1,
-            max_seq_length=MAX_SEQ_LENGTH,
             learning_rate=2e-4,
             fp16=not torch.cuda.is_bf16_supported(),
             bf16=torch.cuda.is_bf16_supported(),
             logging_steps=5,
-            output_dir=save_path + "_warmup_tmp",
             report_to="none",
         ),
+        train_dataset=tokenized,
+        data_collator=collator,
     )
     trainer.train()
     model.save_pretrained(save_path + "_warmup")
@@ -211,7 +235,7 @@ def run_grpo(
 
     run_sft_warmup(model, tokenizer, warmup_path, save_path)
 
-    grpo_dataset = prepare_grpo_dataset(train_slice, tokenizer)
+    grpo_dataset = prepare_grpo_dataset(train_slice)
     callback = EarlyStoppingCallback(model, tokenizer, val_slice, save_path)
 
     trainer = GRPOTrainer(
@@ -220,8 +244,10 @@ def run_grpo(
         train_dataset=grpo_dataset,
         reward_funcs=[compute_reward],
         args=GRPOConfig(
+            use_vllm=False,
             num_generations=4,
-            max_new_tokens=512,
+            max_prompt_length=512,
+            max_completion_length=512,
             temperature=0.7,
             beta=0.04,
             learning_rate=2e-6,

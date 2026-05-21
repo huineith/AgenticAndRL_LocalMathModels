@@ -36,7 +36,7 @@ def r_operators(completion: str, solution: str) -> float:
     return correct / expected_count
 
 
-# Single reward function for TRL GRPOTrainer.
+# Reward function for Unsloth GRPOTrainer.
 # `solution` is the raw GSM8K answer field containing <<>> annotations and #### N.
 def compute_reward(completions: list[str], solution: list[str], **kwargs) -> list[float]:
     rewards = []
