@@ -32,7 +32,7 @@ from prompts import SYSTEM_PROMPT
 
 MAX_SEQ_LENGTH = 1024
 LORA_RANK = 16
-VAL_INDICES = list(range(7400, 7500))
+VAL_INDICES = list(range(7373, 7473))
 
 # Sätt till False om du får slut på GPU-minne (kör då generering via
 # transformers/unsloth istället för vLLM). Med vLLM på sätter vi
