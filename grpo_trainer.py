@@ -158,6 +158,7 @@ def load_base_model(model_name: str):
         fast_inference=USE_VLLM,
         max_lora_rank=LORA_RANK,
         gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
+        enforce_eager=True,
     )
     model = FastLanguageModel.get_peft_model(
         model,
