@@ -38,12 +38,17 @@ def r_operators(completion: str, solution: str) -> float:
 
 # Reward function for Unsloth GRPOTrainer.
 # `solution` is the raw GSM8K answer field containing <<>> annotations and #### N.
-def compute_reward(completions: list[str], solution: list[str], **kwargs) -> list[float]:
+def compute_reward(completions: list, solution: list[str], **kwargs) -> list[float]:
     rewards = []
     for completion, sol in zip(completions, solution):
-        if not validate_format(completion):
+        if isinstance(completion, list):
+            text = completion[0]["content"]
+        else:
+            text = completion
+
+        if not validate_format(text):
             rewards.append(0.0)
             continue
-        total = r_answer(completion, sol) + r_steps(completion, sol) + r_operators(completion, sol)
+        total = r_answer(text, sol) + r_steps(text, sol) + r_operators(text, sol)
         rewards.append(total)
     return rewards
