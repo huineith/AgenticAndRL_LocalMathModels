@@ -1,11 +1,4 @@
 import os
-
-# Måste sättas FÖRE all unsloth-import för att aktivera minneseffektiv GRPO.
-# Standby låter unsloth dela vLLM:s minnesutrymme för vikterna, så du kan
-# köra vLLM-generering utan att offra träningsminne. Sätt gpu_memory_utilization
-# till ~0.95 när detta är på.
-os.environ["UNSLOTH_VLLM_STANDBY"] = "1"
-
 import json
 import torch
 from datasets import load_dataset, Dataset
@@ -17,18 +10,12 @@ from transformers import (
     TrainerControl,
     TrainerState,
 )
-
-# I unsloth 2026.x patchas TRL automatiskt vid import av FastLanguageModel.
-# PatchFastRL behövs inte längre och har tagits bort.
 from unsloth import FastLanguageModel
-
-# GRPOTrainer och GRPOConfig kommer från trl, inte från unsloth. Unsloths
-# automatiska patch modifierar dessa klasser på plats.
 from trl import GRPOTrainer, GRPOConfig
-
 from rewards import compute_reward
 from utils import extract_tagged_answer, extract_gsm8k_ground_truth
 from prompts import SYSTEM_PROMPT
+
 
 MAX_SEQ_LENGTH = 1024
 LORA_RANK = 16
@@ -37,7 +24,7 @@ VAL_INDICES = list(range(7373, 7473))
 # Sätt till False om du får slut på GPU-minne (kör då generering via
 # transformers/unsloth istället för vLLM). Med vLLM på sätter vi
 # gpu_memory_utilization högt eftersom standby-läget delar minnet.
-USE_VLLM = True
+USE_VLLM = False
 GPU_MEMORY_UTILIZATION = 0.95
 
 
@@ -150,16 +137,21 @@ class EarlyStoppingCallback(TrainerCallback):
 
 
 def load_base_model(model_name: str):
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        max_seq_length=MAX_SEQ_LENGTH,
-        dtype=None,
-        load_in_4bit=True,
-        fast_inference=USE_VLLM,
-        max_lora_rank=LORA_RANK,
-        gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
-        enforce_eager=True,
-    )
+    kwargs=dict(  model_name=model_name,
+            max_seq_length=MAX_SEQ_LENGTH,
+            dtype=None,
+            load_in_4bit=True,
+            fast_inference=USE_VLLM,
+            max_lora_rank=LORA_RANK,
+            gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
+        )
+    if USE_VLLM:
+            kwargs["gpu_memory_utilization"] = GPU_MEMORY_UTILIZATION
+            kwargs["enforce_eager"] = True
+    
+    model, tokenizer = FastLanguageModel.from_pretrained(**kwargs)
+
+
     model = FastLanguageModel.get_peft_model(
         model,
         r=LORA_RANK,
