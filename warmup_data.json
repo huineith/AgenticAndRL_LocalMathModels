@@ -1,102 +1,102 @@
 [
   {
     "question": "A store sells pencils for $3 each. If Maria buys 7 pencils, how much does she spend?",
-    "response": "<think><step>7 * 3 = 21</step></think><answer>21</answer>"
+    "response": "<think><step> In total she is getting 7 pencils for 3  $ each therfor 7 * 3 = 21 will be the price</step></think><answer>21</answer>"
   },
   {
     "question": "A farmer has 48 eggs and packs them equally into 6 cartons. How many eggs are in each carton?",
-    "response": "<think><step>48 / 6 = 8</step></think><answer>8</answer>"
+    "response": "<think><step> to get the number in a carton we need to divide the total by the number of cartons 48 / 6 = 8 </step></think><answer>8</answer>"
   },
   {
     "question": "A library has 250 books. A donation adds 75 more. How many books are there now?",
-    "response": "<think><step>250 + 75 = 325</step></think><answer>325</answer>"
+    "response": "<think><step> From the start there is 250 and then we get 75 more therefor the new total is 250 + 75 = 325</step></think><answer>325</answer>"
   },
   {
     "question": "Sam had 85 marbles and lost 27 in a game. How many does he have now?",
-    "response": "<think><step>85 - 27 = 58</step></think><answer>58</answer>"
+    "response": "<think><step>Sam has 85 to start with and lose 27 therefor the new total is 85 - 27 = 58</step></think><answer>58</answer>"
   },
   {
     "question": "A car travels at 60 miles per hour for 3 hours. How far does it travel?",
-    "response": "<think><step>60 * 3 = 180</step></think><answer>180</answer>"
+    "response": "<think><step>Each hour the car moves 60 miles, if we do this for 3 hours we must multiply the speed by the time to get the distance 60 * 3 = 180</step></think><answer>180</answer>"
   },
   {
     "question": "72 students are divided equally into 9 teams. How many students are on each team?",
-    "response": "<think><step>72 / 9 = 8</step></think><answer>8</answer>"
+    "response": "<think><step> 72 students need to be divided in nine teams the number per team is then given by 72 / 9 = 8</step></think><answer>8</answer>"
   },
   {
     "question": "A baker made 24 cookies and ate 4. He sold the rest for $2 each. How much did he earn?",
-    "response": "<think><step>24 - 4 = 20</step><step>20 * 2 = 40</step></think><answer>40</answer>"
+    "response": "<think><step>The baker starts with 24 cookies and eats 4 the new total is 24 - 4 = 20</step><step> The new number of cookies after the baker has eaten 4 is 20 as I said previously. The price if each is worth 2$ is then given by number times price  20 * 2 = 40</step></think><answer>40</answer>"
   },
   {
     "question": "Jane earns $15 per hour. She worked 6 hours on Monday and 4 hours on Tuesday. How much did she earn in total?",
-    "response": "<think><step>6 + 4 = 10</step><step>10 * 15 = 150</step></think><answer>150</answer>"
+    "response": "<think><step>The total hours Jane worked. is 6h on  Monday and 4h on Tuesday the total is then 6 + 4 = 10</step><step> We found that Jane worked 10h in total. If she earns 15$ per hour the earnings are then, 10 * 15 = 150</step></think><answer>150</answer>"
   },
   {
     "question": "Tom has 3 bags of apples with 12 apples each. He gives 6 apples to his neighbor. How many does he have left?",
-    "response": "<think><step>3 * 12 = 36</step><step>36 - 6 = 30</step></think><answer>30</answer>"
+    "response": "<think><step>To get the number of apples we multiply the number of bags with the number of apples inside,3 * 12 = 36</step><step> Toms total number of apples where 36 if Tom give away 6, Tom has 36 - 6 = 30</step></think><answer>30</answer>"
   },
   {
     "question": "Lisa saves $25 each week. After 8 weeks she spends $80 on a gift. How much does she have left?",
-    "response": "<think><step>25 * 8 = 200</step><step>200 - 80 = 120</step></think><answer>120</answer>"
+    "response": "<think><step>The total price is weeks times saving per week, 25 * 8 = 200</step><step>At week 8 Lisa has 200 if shee spends 80, she has 200 - 80 = 120</step></think><answer>120</answer>"
   },
   {
     "question": "A recipe needs 3 cups of flour for 12 cookies. How many cups are needed for 36 cookies?",
-    "response": "<think><step>36 / 12 = 3</step><step>3 * 3 = 9</step></think><answer>9</answer>"
+    "response": "<think><step> We need to know how many times more 36 is than 12,  36 / 12 = 3</step><step> Since we are making 3 times more cokies we need 3 times more flour than if we made 12, that is 3 * 3 = 9</step></think><answer>9</answer>"
   },
   {
     "question": "A shirt costs $40. It is discounted by $10. If you buy 3 shirts at the discounted price, how much do you spend?",
-    "response": "<think><step>40 - 10 = 30</step><step>30 * 3 = 90</step></think><answer>90</answer>"
+    "response": "<think><step> The discounted price is 40 reduced by 10, 40 - 10 = 30</step><step>We buy 3 at the new price of 30. The total price is 30 * 3 = 90</step></think><answer>90</answer>"
   },
   {
     "question": "Mark buys 4 books at $12 each and pays with a $60 bill. How much change does he receive?",
-    "response": "<think><step>4 * 12 = 48</step><step>60 - 48 = 12</step></think><answer>12</answer>"
+    "response": "<think><step>To find the total cost we multiply the number of books by the price per book, 4 * 12 = 48</step><step>Mark paid with a 60 bill and the books cost 48, the change he gets back is 60 - 48 = 12</step></think><answer>12</answer>"
   },
   {
     "question": "A class baked 32 cupcakes. The teacher ate 4. The remaining cupcakes are shared equally among 7 students. How many does each student get?",
-    "response": "<think><step>32 - 4 = 28</step><step>28 / 7 = 4</step></think><answer>4</answer>"
+    "response": "<think><step>The teacher ate 4 of the 32 cupcakes so the number remaining is 32 - 4 = 28</step><step>We found that 28 cupcakes remain and they are shared equally among 7 students, so each student gets 28 / 7 = 4</step></think><answer>4</answer>"
   },
   {
     "question": "A box contains 60 chocolates and 15 are milk chocolate. The rest are dark chocolate at $2 each. How much do all the dark chocolates cost?",
-    "response": "<think><step>60 - 15 = 45</step><step>45 * 2 = 90</step></think><answer>90</answer>"
+    "response": "<think><step>The number of dark chocolates is the total minus the milk chocolates, 60 - 15 = 45</step><step>We found there are 45 dark chocolates and each costs 2, the total cost is therefor 45 * 2 = 90</step></think><answer>90</answer>"
   },
   {
     "question": "A gym has 120 members. 48 cancelled their memberships. Of those remaining, half signed up for a fitness class. How many signed up?",
-    "response": "<think><step>120 - 48 = 72</step><step>72 / 2 = 36</step></think><answer>36</answer>"
+    "response": "<think><step>After the cancellations the remaining members are 120 - 48 = 72</step><step>Of the remaining 72 members half signed up for the fitness class, half of 72 is 72 / 2 = 36</step></think><answer>36</answer>"
   },
   {
     "question": "A store sells pens at $4 each. A school buys 3 packs of 8 pens each. How much does the school spend?",
-    "response": "<think><step>3 * 8 = 24</step><step>24 * 4 = 96</step></think><answer>96</answer>"
+    "response": "<think><step>First we find the total number of pens, 3 packs with 8 pens each gives 3 * 8 = 24 pens</step><step>We found the school buys 24 pens in total, at 4 each the total cost is 24 * 4 = 96</step></think><answer>96</answer>"
   },
   {
     "question": "A cinema earns $9 per ticket and sells 150 tickets on Saturday and 120 on Sunday. How much was earned over the weekend?",
-    "response": "<think><step>150 + 120 = 270</step><step>270 * 9 = 2430</step></think><answer>2430</answer>"
+    "response": "<think><step>The total number of tickets sold over the weekend is Saturday plus Sunday, 150 + 120 = 270</step><step>We found that 270 tickets were sold in total, each earning 9, so the total revenue is 270 * 9 = 2430</step></think><answer>2430</answer>"
   },
   {
     "question": "A factory produces 200 toys per day and operates 5 days a week. After 3 weeks, how many toys have been produced?",
-    "response": "<think><step>200 * 5 = 1000</step><step>1000 * 3 = 3000</step></think><answer>3000</answer>"
+    "response": "<think><step>In one week the factory runs for 5 days at 200 toys per day, so the weekly output is 200 * 5 = 1000</step><step>We found the factory makes 1000 toys per week, after 3 weeks the total production is 1000 * 3 = 3000</step></think><answer>3000</answer>"
   },
   {
     "question": "A school has 5 classrooms of 30 students each. After 10 students left the school, the rest were split equally among 4 classrooms. How many students are in each classroom?",
-    "response": "<think><step>5 * 30 = 150</step><step>150 - 10 = 140</step><step>140 / 4 = 35</step></think><answer>35</answer>"
+    "response": "<think><step>The total number of students at the start is 5 classrooms with 30 each, 5 * 30 = 150</step><step>After 10 students leave the remaining total is 150 - 10 = 140</step><step>We have 140 students split equally among 4 classrooms, so each classroom gets 140 / 4 = 35</step></think><answer>35</answer>"
   },
   {
     "question": "Three friends have $18, $24, and $30. They combine their money and share it equally. How much does each friend get?",
-    "response": "<think><step>18 + 24 = 42</step><step>42 + 30 = 72</step><step>72 / 3 = 24</step></think><answer>24</answer>"
+    "response": "<think><step>Adding the first two amounts together, 18 + 24 = 42</step><step>Adding the third friends amount to the running total, 42 + 30 = 72 in total</step><step>The 72 is split equally among 3 friends so each gets 72 / 3 = 24</step></think><answer>24</answer>"
   },
   {
     "question": "A farmer plants 6 rows of corn with 15 plants each and 4 rows of beans with 20 plants each. How many plants are there in total?",
-    "response": "<think><step>6 * 15 = 90</step><step>4 * 20 = 80</step><step>90 + 80 = 170</step></think><answer>170</answer>"
+    "response": "<think><step>The number of corn plants is 6 rows with 15 each, 6 * 15 = 90</step><step>The number of bean plants is 4 rows with 20 each, 4 * 20 = 80</step><step>The total number of plants is corn plus beans, 90 + 80 = 170</step></think><answer>170</answer>"
   },
   {
     "question": "Anna earns $12 per hour babysitting. She works 3 hours on Friday and 5 hours on Saturday. She saves half of her total earnings. How much does she save?",
-    "response": "<think><step>3 + 5 = 8</step><step>8 * 12 = 96</step><step>96 / 2 = 48</step></think><answer>48</answer>"
+    "response": "<think><step>The total hours Anna works is 3 on Friday plus 5 on Saturday, 3 + 5 = 8 hours in total</step><step>We found Anna worked 8 hours, at 12 per hour her total earnings are 8 * 12 = 96</step><step>Anna saves half of her 96 earnings, so she saves 96 / 2 = 48</step></think><answer>48</answer>"
   },
   {
     "question": "A store has 8 shelves with 45 books each. After 36 books are sold, how many remain?",
-    "response": "<think><step>8 * 45 = 360</step><step>360 - 36 = 324</step></think><answer>324</answer>"
+    "response": "<think><step>The total number of books across all shelves is 8 shelves with 45 each, 8 * 45 = 360</step><step>We found there are 360 books in total, after 36 are sold the remaining count is 360 - 36 = 324</step></think><answer>324</answer>"
   },
   {
     "question": "A family drives at 60 miles per hour for 2 hours, then 50 miles per hour for 3 hours, and then drives a final 40 miles. How far did they travel in total?",
-    "response": "<think><step>60 * 2 = 120</step><step>50 * 3 = 150</step><step>120 + 150 = 270</step><step>270 + 40 = 310</step></think><answer>310</answer>"
+    "response": "<think><step>The first leg at 60 mph for 2 hours covers a distance of 60 * 2 = 120 miles</step><step>The second leg at 50 mph for 3 hours covers a distance of 50 * 3 = 150 miles</step><step>Adding the two legs together so far we have 120 + 150 = 270 miles</step><step>Adding the final 40 miles to the 270 we already have, the total distance is 270 + 40 = 310</step></think><answer>310</answer>"
   }
 ]
