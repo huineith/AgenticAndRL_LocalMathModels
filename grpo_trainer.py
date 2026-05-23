@@ -169,6 +169,9 @@ def load_base_model(model_name: str):
 def run_sft_warmup(model, tokenizer, warmup_path: str, save_path: str):
     with open(warmup_path) as f:
         examples = json.load(f)
+    
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     required_keys = {"question", "response"}
     for i, ex in enumerate(examples):
@@ -198,7 +201,6 @@ def run_sft_warmup(model, tokenizer, warmup_path: str, save_path: str):
         return result
 
     tokenized = raw_dataset.map(tokenize_fn, batched=True, remove_columns=["text"])
-    tokenized.set_format("torch")
 
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
