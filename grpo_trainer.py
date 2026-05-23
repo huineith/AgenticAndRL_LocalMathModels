@@ -1,3 +1,11 @@
+import os
+
+# Måste sättas FÖRE all unsloth-import för att aktivera minneseffektiv GRPO.
+# Standby låter unsloth dela vLLM:s minnesutrymme för vikterna, så du kan
+# köra vLLM-generering utan att offra träningsminne. Sätt gpu_memory_utilization
+# till ~0.95 när detta är på.
+os.environ["UNSLOTH_VLLM_STANDBY"] = "1"
+
 import json
 import torch
 from datasets import load_dataset, Dataset
@@ -9,9 +17,14 @@ from transformers import (
     TrainerControl,
     TrainerState,
 )
-from unsloth import FastLanguageModel, PatchFastRL
-PatchFastRL()
-from unsloth import GRPOTrainer, GRPOConfig
+
+# I unsloth 2026.x patchas TRL automatiskt vid import av FastLanguageModel.
+# PatchFastRL behövs inte längre och har tagits bort.
+from unsloth import FastLanguageModel
+
+# GRPOTrainer och GRPOConfig kommer från trl, inte från unsloth. Unsloths
+# automatiska patch modifierar dessa klasser på plats.
+from trl import GRPOTrainer, GRPOConfig
 
 from rewards import compute_reward
 from utils import extract_tagged_answer, extract_gsm8k_ground_truth
@@ -20,6 +33,12 @@ from prompts import SYSTEM_PROMPT
 MAX_SEQ_LENGTH = 1024
 LORA_RANK = 16
 VAL_INDICES = list(range(7400, 7500))
+
+# Sätt till False om du får slut på GPU-minne (kör då generering via
+# transformers/unsloth istället för vLLM). Med vLLM på sätter vi
+# gpu_memory_utilization högt eftersom standby-läget delar minnet.
+USE_VLLM = True
+GPU_MEMORY_UTILIZATION = 0.95
 
 
 def load_gsm8k_splits(data_fraction: float, seed: int = 42):
@@ -55,11 +74,12 @@ def prepare_grpo_dataset(train_slice) -> Dataset:
             ],
             "solution": example["answer"],
         }
-    return train_slice.map(map_fn, remove_columns=train_slice.column_names, num_proc=1)
+    return train_slice.map(map_fn, remove_columns=train_slice.column_names)
 
 
 def evaluate_on_validation(model, tokenizer, val_slice) -> float:
     was_training = model.training
+    FastLanguageModel.for_inference(model)
     model.eval()
     correct = 0
     try:
@@ -82,6 +102,8 @@ def evaluate_on_validation(model, tokenizer, val_slice) -> float:
                     correct += 1
         return correct / len(val_slice)
     finally:
+        # Återställ träningsläge så GRPO-loopen kan fortsätta.
+        FastLanguageModel.for_training(model)
         if was_training:
             model.train()
 
@@ -133,7 +155,9 @@ def load_base_model(model_name: str):
         max_seq_length=MAX_SEQ_LENGTH,
         dtype=None,
         load_in_4bit=True,
-        fast_inference=True,
+        fast_inference=USE_VLLM,
+        max_lora_rank=LORA_RANK,
+        gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
     )
     model = FastLanguageModel.get_peft_model(
         model,
@@ -204,6 +228,10 @@ def run_sft_warmup(model, tokenizer, warmup_path: str, save_path: str):
     trainer.train()
     model.save_pretrained(save_path + "_warmup")
     tokenizer.save_pretrained(save_path + "_warmup")
+
+    # Säkerställ att modellen är i träningsläge inför GRPO-fasen.
+    FastLanguageModel.for_training(model)
+    model.train()
     print(f"SFT warmup complete -> {save_path}_warmup")
 
 
@@ -244,7 +272,7 @@ def run_grpo(
         train_dataset=grpo_dataset,
         reward_funcs=[compute_reward],
         args=GRPOConfig(
-            use_vllm=False,
+            use_vllm=USE_VLLM,
             num_generations=4,
             max_prompt_length=512,
             max_completion_length=512,
