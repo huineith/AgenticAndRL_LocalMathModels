@@ -139,7 +139,7 @@ def load_base_model(model_name: str):
         model_name=model_name,
         max_seq_length=MAX_SEQ_LENGTH,
         dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
-        load_in_4bit=False,
+        load_in_4bit=True,
         max_lora_rank=LORA_RANK,
     )
 
