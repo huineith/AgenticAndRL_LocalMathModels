@@ -190,7 +190,7 @@ def run_sft_warmup(model, tokenizer, warmup_path: str, save_path: str):
             max_length=MAX_SEQ_LENGTH,
             padding=False,
         )
-        # result["labels"] = result["input_ids"].copy()
+        result["labels"] = result["input_ids"].copy()
         return result
 
     tokenized = raw_dataset.map(tokenize_fn, batched=True, remove_columns=["text"])
