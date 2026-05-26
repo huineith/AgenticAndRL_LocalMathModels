@@ -12,7 +12,7 @@ MAX_RETRIES = 3
 def load_prm():
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_compute_dtype=torch.bfloat16,
     )
     tokenizer = AutoTokenizer.from_pretrained(PRM_MODEL_ID, trust_remote_code=True)
     model = AutoModel.from_pretrained(
