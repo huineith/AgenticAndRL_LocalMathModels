@@ -186,7 +186,7 @@ def _load_trained_model(checkpoint_path: str):
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=checkpoint_path,
         max_seq_length=MAX_SEQ_LENGTH,
-        dtype=None,
+        dtype=torch.bfloat16,
         load_in_4bit=True,
     )
     FastLanguageModel.for_inference(model)
