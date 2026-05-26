@@ -8,7 +8,8 @@ from transformers import (
     TrainerControl,
     TrainerState,
 )
-from unsloth import FastLanguageModel
+from unsloth import FastLanguageModel, PatchFastRL
+PatchFastRL("GRPO", FastLanguageModel)
 from trl import GRPOTrainer, GRPOConfig, SFTTrainer, SFTConfig
 from rewards import compute_reward
 from utils import extract_tagged_answer, extract_gsm8k_ground_truth
@@ -18,7 +19,7 @@ from prompts import SYSTEM_PROMPT
 MAX_SEQ_LENGTH = 1024
 LORA_RANK = 16
 VAL_INDICES = list(range(7373, 7473))
-
+current_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
 def load_gsm8k_splits(data_fraction: float, seed: int = 42):
     dataset = load_dataset("openai/gsm8k", "main")
@@ -62,7 +63,7 @@ def evaluate_on_validation(model, tokenizer, val_slice) -> float:
     model.eval()
     correct = 0
     try:
-        with torch.no_grad():
+        with torch.no_grad(),torch.autocast(device_type="cuda", dtype=current_dtype):
             for example in val_slice:
                 prompt = format_prompt(example["question"], tokenizer)
                 inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
@@ -138,7 +139,7 @@ def load_base_model(model_name: str):
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=MAX_SEQ_LENGTH,
-        dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+        dtype=current_dtype,
         load_in_4bit=True,
         max_lora_rank=LORA_RANK,
     )
@@ -330,8 +331,8 @@ def run_grpo(
             per_device_train_batch_size=1,
             gradient_accumulation_steps=4,
             num_train_epochs=max_epochs,
-            fp16=not torch.cuda.is_bf16_supported(),
-            bf16=torch.cuda.is_bf16_supported(),
+            fp16=False,
+            bf16=True,
             logging_steps=10,
             output_dir=save_path + "_grpo_tmp",
             report_to="none",
