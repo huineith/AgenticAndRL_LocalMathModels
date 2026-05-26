@@ -3,16 +3,13 @@ import json
 import torch
 from datasets import load_dataset, Dataset
 from transformers import (
-    Trainer,
     TrainingArguments,
-    DataCollatorForLanguageModeling,
-    DataCollatorForSeq2Seq,
     TrainerCallback,
     TrainerControl,
     TrainerState,
 )
 from unsloth import FastLanguageModel
-from trl import GRPOTrainer, GRPOConfig
+from trl import GRPOTrainer, GRPOConfig, SFTTrainer, SFTConfig
 from rewards import compute_reward
 from utils import extract_tagged_answer, extract_gsm8k_ground_truth
 from prompts import SYSTEM_PROMPT
@@ -184,30 +181,19 @@ def run_sft_warmup(model, tokenizer, warmup_path: str, save_path: str):
 
     raw_dataset = Dataset.from_dict({"text": texts})
 
-    def tokenize_fn(batch):
-        result = tokenizer(
-            batch["text"],
-            truncation=True,
-            max_length=MAX_SEQ_LENGTH,
-            padding=False,
-        )
-        # batched=True => input_ids är en lista av listor (en per exempel).
-        # En enkel .copy() på den yttre listan ger fel form; kopiera varje rad.
-        # Att låta DataCollatorForLanguageModeling skapa labels gick dessutom
-        # i otakt med unsloths patchade compute_loss (modellen returnerade
-        # bara logits, ingen loss). Causal LM => labels = kopia av input_ids.
-        result["labels"] = [ids.copy() for ids in result["input_ids"]]
-        return result
-
-    tokenized = raw_dataset.map(tokenize_fn, batched=True, remove_columns=["text"])
-
-    # Padding-collator som maskar paddade label-positioner till -100 men inte
-    # själv skapar labels (dem satte vi redan ovan).
-    collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, label_pad_token_id=-100)
-
-    trainer = Trainer(
+    # Använd TRL:s SFTTrainer istället för en rå transformers.Trainer.
+    # Den råa Trainer-vägen gav "model did not return a loss" eftersom
+    # unsloths patchade compute_loss inte beräknar loss korrekt när man
+    # matar in egna labels/collator. SFTTrainer är den väg unsloth faktiskt
+    # patchar: ge den råtext via dataset_text_field, så sköter den
+    # tokenisering, labels och loss internt.
+    sft_trainer = SFTTrainer(
         model=model,
-        args=TrainingArguments(
+        processing_class=tokenizer,
+        train_dataset=raw_dataset,
+        args=SFTConfig(
+            dataset_text_field="text",
+            max_length=MAX_SEQ_LENGTH,
             output_dir=save_path + "_warmup_tmp",
             per_device_train_batch_size=2,
             gradient_accumulation_steps=2,
@@ -218,10 +204,8 @@ def run_sft_warmup(model, tokenizer, warmup_path: str, save_path: str):
             logging_steps=5,
             report_to="none",
         ),
-        train_dataset=tokenized,
-        data_collator=collator,
     )
-    trainer.train()
+    sft_trainer.train()
     model.save_pretrained(save_path + "_warmup")
     tokenizer.save_pretrained(save_path + "_warmup")
 
