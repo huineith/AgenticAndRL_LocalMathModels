@@ -19,7 +19,7 @@ from prompts import SYSTEM_PROMPT
 MAX_SEQ_LENGTH = 1024
 LORA_RANK = 16
 VAL_INDICES = list(range(7373, 7473))
-current_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+current_dtype = torch.bfloat16 #torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
 def load_gsm8k_splits(data_fraction: float, seed: int = 42):
     dataset = load_dataset("openai/gsm8k", "main")
