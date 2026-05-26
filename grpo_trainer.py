@@ -151,7 +151,7 @@ def load_base_model(model_name: str):
         lora_alpha=LORA_RANK,
         lora_dropout=0,
         bias="none",
-        use_gradient_checkpointing="unsloth",
+        use_gradient_checkpointing=False,
         random_state=42,
     )
     return model, tokenizer
