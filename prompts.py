@@ -14,16 +14,26 @@ SYSTEM_PROMPT = (
 
 PRM_SYSTEM = "Please reason step by step, and put your final answer within \\boxed{}."
 
-BASELINE_PROMPT_TEMPLATE = (
-    "Solve the math problem. "
-    "Write only the final numeric answer on the last line.\n\n{question}"
-)
-
 # Qwen2.5-Math-Instruct's officially recommended CoT system prompt.
 # The model is finetuned to wrap its final answer in \boxed{}.
 MATH_BASELINE_SYSTEM = (
     "Please reason step by step, and put your final answer within \\boxed{}."
 )
+
+
+
+BASELINE_PROMPT_TEMPLATE = (
+    "Solve the math problem. "
+    "Write only the final numeric answer on the last line.\n\n{question}"
+)
+
+UNTRAINED_CHAT_TEMPLATE = (
+    "<messages>"
+    "<message role='system'>Solve the math problem. Write only the final numeric answer on the last line.</message>"
+    "<message role='user'>{question}</message>"
+    "</messages>"
+)
+
 
 MATH_BASELINE_TEMPLATE = (
     "<messages>"

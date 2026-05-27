@@ -43,8 +43,8 @@ H2_BASELINE_RUN_ID = "math_7b_baseline"
 # H0: untrained instruct-modeller (samma basmodeller som tränades). Använder
 # samma SYSTEM_PROMPT som tränade modeller → direkt jämförbar format-compliance.
 H0_UNTRAINED_RUNS = {
-    "1_5b_untrained": "Qwen/Qwen2.5-1.5B-Instruct",
-    "3b_untrained":   "Qwen/Qwen2.5-3B-Instruct",
+    "1_5b_untrained": "unsloth/Qwen2.5-1.5B-Instruct-bnb-4bit",
+    "3b_untrained": "unsloth/Qwen2.5-3B-Instruct-bnb-4bit"
 }
 
 # Hitta _run_eval.py bredvid denna fil

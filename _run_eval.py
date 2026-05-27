@@ -19,7 +19,8 @@ from prompts import (
     SYSTEM_PROMPT, 
     MATH_BASELINE_SYSTEM, 
     BASELINE_PROMPT_TEMPLATE, 
-    MATH_BASELINE_TEMPLATE
+    MATH_BASELINE_TEMPLATE,
+    UNTRAINED_CHAT_TEMPLATE
 )
 
 def generate_one(model, tokenizer, prompt):
@@ -104,10 +105,12 @@ def main():
     correct = 0
 
     # --- EVALUERINGSLOOP ---
-    # ==================================================== 1. UNTRAINED BASELINE
+# ==================================================== 1. UNTRAINED BASELINE
     if args.mode == "untrained_baseline":
         for i, (q, sol) in enumerate(zip(questions, solutions)):
-            prompt = BASELINE_PROMPT_TEMPLATE.format(question=q)
+            # MODULÄR PROMPT: Använder nu samma chatt-struktur (<messages>) som H1 och H2
+            prompt = UNTRAINED_CHAT_TEMPLATE.format(question=q)
+            
             completion, in_tok, out_tok = generate_one(model, tokenizer, prompt)
             predicted = extract_h0_answer(completion)
             expected = extract_gsm8k_ground_truth(sol)
