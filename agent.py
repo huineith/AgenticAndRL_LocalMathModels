@@ -1,15 +1,22 @@
 import torch
 from transformers import AutoModel, AutoTokenizer, BitsAndBytesConfig
 
-from utils import extract_steps, extract_tagged_answer, extract_gsm8k_ground_truth
+from utils import extract_steps, extract_tagged_answer
 from prompts import SYSTEM_PROMPT, PRM_SYSTEM
 
+# Qwen släppte aldrig en officiell PRM-3B. Officiella storlekar är 7B och 72B.
 PRM_MODEL_ID = "Qwen/Qwen2.5-Math-PRM-7B"
 SCORE_THRESHOLD = 0.2
 MAX_RETRIES = 3
+MAX_NEW_TOKENS = 512
 
 
 def load_prm():
+    """
+    Ladda PRM:en separat (transformers + 4-bit). PRM är en token-classifier
+    över <extra_0>-positioner, så vLLM ger ingen vinst här — vi kör den
+    direkt via transformers med bitsandbytes-quant för att hålla VRAM nere.
+    """
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_compute_dtype=torch.bfloat16,
@@ -89,20 +96,41 @@ def _format_correction_prompt(question: str, accepted_steps: list[str], tokenize
     return base + prefill
 
 
-def _generate(model, tokenizer, prompt: str) -> tuple[str, int, int]:
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    input_len = inputs["input_ids"].shape[1]
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=512,
-            temperature=0.7,
-            do_sample=True,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-    output_len = outputs.shape[1] - input_len
-    completion = tokenizer.decode(outputs[0][input_len:], skip_special_tokens=True)
-    return completion, input_len, output_len
+def _generate_vllm(model, tokenizer, prompt: str) -> tuple[str, int, int]:
+    """
+    Generera via Unsloths vLLM-backend (model.fast_generate). Faller tillbaka
+    till model.generate om fast_generate inte finns (när fast_inference=False).
+    """
+    from vllm import SamplingParams
+
+    sampling_params = SamplingParams(
+        temperature=0.7,
+        max_tokens=MAX_NEW_TOKENS,
+        top_p=1.0,
+    )
+
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+    in_tok = input_ids.shape[1]
+
+    if hasattr(model, "fast_generate"):
+        outputs = model.fast_generate([prompt], sampling_params=sampling_params)
+        completion = outputs[0].outputs[0].text
+        out_tok = len(outputs[0].outputs[0].token_ids)
+    else:
+        # Fallback: model.generate (om vLLM inte är aktiverat)
+        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            gen = model.generate(
+                **inputs,
+                max_new_tokens=MAX_NEW_TOKENS,
+                temperature=0.7,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        out_tok = gen.shape[1] - in_tok
+        completion = tokenizer.decode(gen[0][in_tok:], skip_special_tokens=True)
+
+    return completion, in_tok, out_tok
 
 
 def run_agentic_loop(
@@ -130,7 +158,7 @@ def run_agentic_loop(
         else:
             prompt = _format_initial_prompt(question, tokenizer)
 
-        completion, in_tok, out_tok = _generate(model, tokenizer, prompt)
+        completion, in_tok, out_tok = _generate_vllm(model, tokenizer, prompt)
         total_tokens += in_tok + out_tok
 
         new_steps = extract_steps(completion)
@@ -192,5 +220,3 @@ def run_agentic_loop(
         "steps": [],
         "total_tokens": total_tokens,
     }
-
-

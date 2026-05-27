@@ -41,6 +41,75 @@ def extract_last_integer(text: str) -> str | None:
     return None
 
 
+def extract_boxed_answer(text: str) -> str | None:
+    """
+    Extract the answer from Qwen2.5-Math-Instruct output, which wraps the final
+    answer in \\boxed{...}. Handles nested braces by matching them manually.
+    Falls back to the last integer in the text if no \\boxed{} is found.
+    """
+    idx = text.rfind(r'\boxed{')
+    if idx == -1:
+        return extract_last_integer(text)
+
+    start = idx + len(r'\boxed{')
+    depth = 1
+    i = start
+    while i < len(text) and depth > 0:
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+        i += 1
+
+    if depth != 0:
+        return extract_last_integer(text)
+
+    content = text[start:i - 1].strip()
+    # \boxed{} kan innehålla LaTeX som \frac, \%, $, {,} (LaTeX-grupperat komma), etc.
+    # Strippa LaTeX-grupperade kommatecken {,} → , och dollartecken före num-match.
+    cleaned = content.replace('{,}', ',').replace('$', '').replace('\\,', '')
+    m = re.search(r'-?\d[\d,]*(?:\.\d+)?', cleaned)
+    if m:
+        return normalize_answer(m.group())
+    return extract_last_integer(text)
+
+
+def _extract_boxed_only(text: str) -> str | None:
+    """Som extract_boxed_answer men UTAN last-integer-fallback.
+    Returnerar None om \\boxed{} saknas eller är tomt. Används för H0
+    där vi vill kunna skilja 'inget format alls' från 'fel format'."""
+    idx = text.rfind(r'\boxed{')
+    if idx == -1:
+        return None
+    start = idx + len(r'\boxed{')
+    depth = 1
+    i = start
+    while i < len(text) and depth > 0:
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+        i += 1
+    if depth != 0:
+        return None
+    content = text[start:i - 1].strip()
+    cleaned = content.replace('{,}', ',').replace('$', '').replace('\\,', '')
+    m = re.search(r'-?\d[\d,]*(?:\.\d+)?', cleaned)
+    return normalize_answer(m.group()) if m else None
+
+
+def extract_h0_answer(text: str) -> str | None:
+    """
+    H0-extractor: försök <answer>-taggen först, sedan \\boxed{}.
+    Använder INTE last-integer-fallback — vi vill mäta hur ofta otränade
+    modeller producerar *något* parsable format, inte plocka random siffror.
+    """
+    tagged = extract_tagged_answer(text)
+    if tagged is not None:
+        return tagged
+    return _extract_boxed_only(text)
+
+
 def extract_steps(text: str) -> list[str]:
     return re.findall(r'<step>(.*?)</step>', text, re.DOTALL)
 

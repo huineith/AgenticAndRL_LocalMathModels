@@ -1,404 +1,417 @@
-import gc
+"""
+Benchmark-orchestrator. Två separata funktioner — en per hypotes:
+
+  run_h1_benchmark(checkpoints, save_dir, ...)
+    Data efficiency × model size. Kör 6 no-agent-körningar:
+      checkpoints = {
+          "1_5b_2pct":  "/path/.../grpo_1_5b_2pct_best",
+          "1_5b_5pct":  "/path/...",
+          "1_5b_10pct": "/path/...",
+          "3b_2pct":    "/path/...",
+          "3b_5pct":    "/path/...",
+          "3b_10pct":   "/path/...",
+      }
+
+  run_h2_benchmark(agent_checkpoint, save_dir, ...)
+    Agentic compute vs SOTA. Kör 2 körningar:
+      - agent på vald checkpoint (default 3B 10%)
+      - Math-7B-Instruct zero-shot baseline
+
+Varje körning sker i en separat subprocess för vLLM-cleanup-safety.
+Subprocess-krasch → CalledProcessError raisas omedelbart, ingen CSV skrivs.
+
+Per save_dir produceras:
+    {run_id}_results.json       per körning
+    benchmark_summary.csv       en rad per run_id
+    benchmark_detailed.csv      en rad per fråga
+
+Run-ID:n är fria strängar utan grupp-IDs. CSV:erna sorteras i ordningen
+som körningarna kördes / hittades.
+"""
 import os
+import sys
 import csv
 import json
-import torch
-import matplotlib.pyplot as plt
-from datasets import load_dataset
-from unsloth import FastLanguageModel
+import subprocess
+from typing import Optional
 
-from utils import extract_tagged_answer, extract_last_integer, extract_gsm8k_ground_truth
-from agent import load_prm, run_agentic_loop
-from prompts import SYSTEM_PROMPT, BASELINE_PROMPT_TEMPLATE
+# Officiell math-tunad baseline. Qwen2.5-Math finns bara i 1.5B/7B/72B.
+BASELINE_MODEL_ID = "Qwen/Qwen2.5-Math-7B-Instruct"
+H2_AGENT_RUN_ID = "3b_10pct_agent"
+H2_BASELINE_RUN_ID = "math_7b_baseline"
 
-BASELINE_MODEL_ID = "Qwen/Qwen2.5-14B-Instruct"
-MAX_SEQ_LENGTH = 1024
-MAX_GEN_TOKENS = 512
+# H0: untrained instruct-modeller (samma basmodeller som tränades). Använder
+# samma SYSTEM_PROMPT som tränade modeller → direkt jämförbar format-compliance.
+H0_UNTRAINED_RUNS = {
+    "1_5b_untrained": "Qwen/Qwen2.5-1.5B-Instruct",
+    "3b_untrained":   "Qwen/Qwen2.5-3B-Instruct",
+}
 
-GROUP_META = [
-    {"id": 1, "name": "3B No Agent",   "size": "3b", "agentic": False, "color": "steelblue",  "marker": "o"},
-    {"id": 2, "name": "3B + Agent",    "size": "3b", "agentic": True,  "color": "steelblue",  "marker": "D"},
-    {"id": 3, "name": "7B No Agent",   "size": "7b", "agentic": False, "color": "seagreen",   "marker": "o"},
-    {"id": 4, "name": "7B + Agent",    "size": "7b", "agentic": True,  "color": "seagreen",   "marker": "D"},
-    {"id": 5, "name": "14B Baseline",  "size": "14b","agentic": False, "color": "darkorange", "marker": "s"},
+# Hitta _run_eval.py bredvid denna fil
+_RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_run_eval.py")
+
+
+# ============================================================================
+# Subprocess wrapper
+# ============================================================================
+
+def _run_subprocess(run_id: str, mode: str, save_dir: str,
+                    n_questions: int, seed: int,
+                    checkpoint: Optional[str] = None) -> None:
+    """Kör runner-skriptet som subprocess. Vidarebefordrar stdout/stderr live.
+    Raisear CalledProcessError om subprocess inte exit:ar med 0."""
+    cmd = [
+        sys.executable, _RUNNER,
+        "--run-id", run_id,
+        "--mode", mode,
+        "--save-dir", save_dir,
+        "--n-questions", str(n_questions),
+        "--seed", str(seed),
+    ]
+    if checkpoint:
+        cmd.extend(["--checkpoint", checkpoint])
+
+    print(f"\n>>> Launching subprocess for run_id={run_id}, mode={mode}", flush=True)
+    print(f">>> Command: {' '.join(cmd)}", flush=True)
+
+    # check=True raisear CalledProcessError vid nonzero exit code.
+    # stdout/stderr ärvs från parent → live-output i notebooken.
+    subprocess.run(cmd, check=True)
+
+
+def _result_path(save_dir: str, run_id: str) -> str:
+    return os.path.join(save_dir, f"{run_id}_results.json")
+
+
+def _execute_run(run_id: str, mode: str, save_dir: str,
+                 n_questions: int, seed: int,
+                 checkpoint: Optional[str] = None) -> None:
+    """Cache + subprocess-utförande. Hoppar över om resultatfilen redan finns."""
+    out_path = _result_path(save_dir, run_id)
+    if os.path.exists(out_path):
+        print(f"\n=== {run_id} — CACHED ===")
+        print(f"  Found existing {out_path}, skipping subprocess.")
+        return
+
+    if mode in ("no_agent", "agent"):
+        if not checkpoint:
+            raise ValueError(f"Run {run_id} requires a checkpoint path (mode={mode}).")
+        if not os.path.exists(checkpoint):
+            raise FileNotFoundError(f"Checkpoint for {run_id} not found: {checkpoint}")
+    elif mode == "untrained_baseline":
+        if not checkpoint:
+            raise ValueError(f"Run {run_id} requires a HuggingFace model ID (mode={mode}).")
+        # checkpoint är ett HF ID som "Qwen/Qwen2.5-1.5B-Instruct" — kan inte
+        # filsystem-valideras. Subprocess kommer fail:a tydligt om ID är fel.
+
+    try:
+        _run_subprocess(run_id, mode, save_dir, n_questions, seed, checkpoint)
+    except subprocess.CalledProcessError as e:
+        print(f"\n!!! Run {run_id} subprocess failed with exit code {e.returncode}.", flush=True)
+        if e.returncode in (-9, 137):
+            print("!!! Likely OOM-kill. Lower gpu_memory_utilization in _run_eval.py.", flush=True)
+        print("!!! Stopping benchmark — no summary CSV will be written.", flush=True)
+        raise
+
+    if not os.path.exists(out_path):
+        raise RuntimeError(
+            f"Run {run_id} subprocess exited cleanly but {out_path} was not written. "
+            "Something is wrong inside _run_eval.py."
+        )
+
+
+# ============================================================================
+# Metrics
+# ============================================================================
+
+def _compute_metrics(results: list[dict], is_agent: bool) -> dict:
+    """Räkna ut alla per-grupp-metrics från en lista per-fråge-resultat."""
+    total = len(results)
+    if total == 0:
+        return {}
+    correct = sum(1 for r in results if r["correct"])
+    total_tokens = sum(r["tokens"] for r in results)
+    extracted = sum(1 for r in results if r["predicted"] is not None)
+    format_ok = sum(1 for r in results if r.get("format_ok", False))
+
+    metrics = {
+        "accuracy": correct / total,
+        "avg_tokens": total_tokens / total,
+        "tokens_per_correct": (total_tokens / correct) if correct > 0 else float("inf"),
+        "correct": correct,
+        "total": total,
+        # När modellen *gav* ett svar, hur ofta var det rätt?
+        "answer_extracted_rate": extracted / total,
+        "answer_extracted_accuracy": (correct / extracted) if extracted > 0 else 0.0,
+        # Format compliance — sekundärt intresse. För no_agent: matchade
+        # <think>...<answer>-mönstret. För math_baseline: hittades \boxed{}.
+        # För untrained_baseline: matchade strikta <think>...<answer>-mönstret.
+        "format_violation_rate": 1.0 - (format_ok / total),
+    }
+
+    if is_agent:
+        # Status-fördelning
+        from collections import Counter
+        status_counts = Counter(r.get("status", "missing") for r in results)
+        for status in ("confident", "unsure", "failed"):
+            metrics[f"status_{status}_rate"] = status_counts.get(status, 0) / total
+
+        # PRM-kalibrering: accuracy betingat på status
+        for status in ("confident", "unsure"):
+            in_status = [r for r in results if r.get("status") == status]
+            if in_status:
+                metrics[f"accuracy_when_{status}"] = (
+                    sum(1 for r in in_status if r["correct"]) / len(in_status)
+                )
+            else:
+                metrics[f"accuracy_when_{status}"] = 0.0
+    return metrics
+
+
+# CSV-kolumnordning. Mode-specifika fält kommer sist, tomma där de inte gäller.
+_SUMMARY_FIELDS = [
+    "run_id", "mode", "checkpoint",
+    "accuracy", "avg_tokens", "tokens_per_correct",
+    "correct", "total",
+    "answer_extracted_rate", "answer_extracted_accuracy",
+    "format_violation_rate",
+    # H2-specifikt
+    "status_confident_rate", "status_unsure_rate", "status_failed_rate",
+    "accuracy_when_confident", "accuracy_when_unsure",
+]
+
+_DETAILED_FIELDS = [
+    "run_id", "mode", "question_idx", "question",
+    "predicted", "expected", "correct", "tokens", "format_ok", "status",
 ]
 
 
-def clear_gpu():
-    gc.collect()
-    torch.cuda.empty_cache()
-
-
-def load_benchmark_questions(n: int = 500, seed: int = 42):
-    dataset = load_dataset("openai/gsm8k", "main")
-    test_split = dataset["test"]
-    sampled = test_split.shuffle(seed=seed).select(range(n))
-    questions = sampled["question"]
-    solutions = sampled["answer"]
-    return questions, solutions
-
-
-def _format_trained_prompt(question: str, tokenizer) -> str:
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": question},
-    ]
-    return tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-
-
-def _format_baseline_prompt(question: str, tokenizer) -> str:
-    messages = [
-        {"role": "user", "content": BASELINE_PROMPT_TEMPLATE.format(question=question)},
-    ]
-    return tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-
-
-def _compute_metrics(results: list[dict]) -> dict:
-    total = len(results)
-    correct = sum(r["correct"] for r in results)
-    total_tokens = sum(r["tokens"] for r in results)
-    accuracy = correct / total
-    avg_tokens = total_tokens / total
-    tokens_per_correct = total_tokens / correct if correct > 0 else float("inf")
-    return {
-        "accuracy": accuracy,
-        "avg_tokens": avg_tokens,
-        "tokens_per_correct": tokens_per_correct,
-        "correct": correct,
-        "total": total,
-    }
-
-
-def _group_result_path(save_dir: str, gid: int) -> str:
-    return os.path.join(save_dir, f"group_{gid}_results.json")
-
-
-def _save_group(save_dir: str, gid: int, results: list[dict]):
-    path = _group_result_path(save_dir, gid)
-    with open(path, "w") as f:
-        json.dump(results, f)
-    print(f"  Checkpoint saved: {path}")
-
-
-def _load_group(save_dir: str, gid: int) -> list[dict] | None:
-    path = _group_result_path(save_dir, gid)
-    if not os.path.exists(path):
-        return None
-    with open(path) as f:
-        return json.load(f)
-
-
-def _run_agentic_with_recovery(
-    model,
-    tokenizer,
-    prm_model,
-    prm_tokenizer,
-    questions: list[str],
-    solutions: list[str],
-    partial_path: str,
-) -> list[dict]:
-    # Reload any questions already processed in a prior interrupted run
-    completed: dict[int, dict] = {}
-    if os.path.exists(partial_path):
-        with open(partial_path) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    r = json.loads(line)
-                    completed[r["question_idx"]] = r
-        print(f"  Resuming: {len(completed)}/{len(questions)} questions already done.")
-
-    results: list[dict | None] = [None] * len(questions)
-    for idx, r in completed.items():
-        results[idx] = r
-    correct = sum(1 for r in completed.values() if r["correct"])
-
-    with open(partial_path, "a") as partial_f:
-        for i, (question, gt_solution) in enumerate(zip(questions, solutions)):
-            if i in completed:
-                continue
-
-            loop_result = run_agentic_loop(model, tokenizer, prm_model, prm_tokenizer, question)
-            answer = loop_result["answer"]
-            expected = extract_gsm8k_ground_truth(gt_solution)
-            is_correct = answer is not None and answer == expected
-            if is_correct:
-                correct += 1
-
-            result = {
-                "question_idx": i,
-                "question": question,
-                "predicted": answer,
-                "expected": expected,
-                "correct": is_correct,
-                "tokens": loop_result["total_tokens"],
-                "status": loop_result["status"],
+def _write_summary_csv(save_dir: str, ordered_runs: list[dict]) -> str:
+    """ordered_runs: list of {run_id, mode, checkpoint, metrics}."""
+    path = os.path.join(save_dir, "benchmark_summary.csv")
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_SUMMARY_FIELDS)
+        writer.writeheader()
+        for run in ordered_runs:
+            row = {
+                "run_id": run["run_id"],
+                "mode": run["mode"],
+                "checkpoint": run["checkpoint"],
             }
-            results[i] = result
-            partial_f.write(json.dumps(result) + "\n")
-            partial_f.flush()
-
-            if (i + 1) % 50 == 0:
-                done = sum(1 for r in results[: i + 1] if r is not None)
-                print(f"  [{i+1}/{len(questions)}] Running accuracy: {correct/done:.4f}")
-
-    return [r for r in results if r is not None]
+            row.update({k: run["metrics"].get(k, "") for k in _SUMMARY_FIELDS
+                        if k not in row})
+            writer.writerow(row)
+    return path
 
 
-def _run_nonagentic(model, tokenizer, questions, solutions, prompt_fn, extract_fn) -> list[dict]:
-    results = []
-    correct = 0
-    for i, (question, solution) in enumerate(zip(questions, solutions)):
-        prompt = prompt_fn(question, tokenizer)
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-        in_tok = inputs["input_ids"].shape[1]
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=MAX_GEN_TOKENS,
-                do_sample=False,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-        out_tok = outputs.shape[1] - in_tok
-        completion = tokenizer.decode(outputs[0][in_tok:], skip_special_tokens=True)
-        predicted = extract_fn(completion)
-        expected = extract_gsm8k_ground_truth(solution)
-        is_correct = predicted is not None and predicted == expected
-        if is_correct:
-            correct += 1
-        results.append({
-            "question": question,
-            "predicted": predicted,
-            "expected": expected,
-            "correct": is_correct,
-            "tokens": in_tok + out_tok,
-        })
-        if (i + 1) % 50 == 0:
-            print(f"  [{i+1}/{len(questions)}] Running accuracy: {correct/(i+1):.4f}")
-    return results
-
-
-def _load_trained_model(checkpoint_path: str):
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=checkpoint_path,
-        max_seq_length=MAX_SEQ_LENGTH,
-        dtype=torch.bfloat16,
-        load_in_4bit=True,
-    )
-    FastLanguageModel.for_inference(model)
-    return model, tokenizer
-
-
-def run_benchmark(
-    checkpoint_3b: str,
-    checkpoint_7b: str,
-    save_dir: str,
-    n_questions: int = 500,
-    seed: int = 42,
-):
-    os.makedirs(save_dir, exist_ok=True)
-
-    # Fail fast if save_dir lives on Drive but Drive isn't mounted
-    if save_dir.startswith("/content/drive") and not os.path.exists("/content/drive/MyDrive"):
-        raise RuntimeError(
-            "Google Drive does not appear to be mounted. "
-            "Run drive.mount('/content/drive') in your notebook (Cell 2) before calling run_benchmark()."
-        )
-
-    questions, solutions = load_benchmark_questions(n_questions, seed)
-    print(f"Loaded {len(questions)} benchmark questions from GSM8K test split.")
-
-    all_results = {}  # group_id -> list[dict]
-    summaries = {}    # group_id -> metrics dict
-
-    # ------------------------------------------------------------------ Group 1
-    print("\n=== Group 1: 3B No Agent ===")
-    cached = _load_group(save_dir, 1)
-    if cached is not None:
-        all_results[1] = cached
-        summaries[1] = _compute_metrics(cached)
-        print(f"  Loaded cached results ({len(cached)} questions). Accuracy: {summaries[1]['accuracy']:.4f}")
-    else:
-        model, tokenizer = _load_trained_model(checkpoint_3b)
-        results = _run_nonagentic(model, tokenizer, questions, solutions,
-                                  _format_trained_prompt, extract_tagged_answer)
-        del model, tokenizer
-        clear_gpu()
-        all_results[1] = results
-        summaries[1] = _compute_metrics(results)
-        _save_group(save_dir, 1, results)
-        print(f"  Accuracy: {summaries[1]['accuracy']:.4f}  Avg tokens: {summaries[1]['avg_tokens']:.1f}")
-
-    # ------------------------------------------------------------------ Group 2
-    print("\n=== Group 2: 3B + Agent ===")
-    cached = _load_group(save_dir, 2)
-    if cached is not None:
-        all_results[2] = cached
-        summaries[2] = _compute_metrics(cached)
-        print(f"  Loaded cached results ({len(cached)} questions). Accuracy: {summaries[2]['accuracy']:.4f}")
-    else:
-        model, tokenizer = _load_trained_model(checkpoint_3b)
-        prm_model, prm_tokenizer = load_prm()
-        partial_path = os.path.join(save_dir, "group_2_partial.jsonl")
-        results = _run_agentic_with_recovery(model, tokenizer, prm_model, prm_tokenizer,
-                                             questions, solutions, partial_path)
-        del model, tokenizer, prm_model, prm_tokenizer
-        clear_gpu()
-        all_results[2] = results
-        summaries[2] = _compute_metrics(results)
-        _save_group(save_dir, 2, results)
-        if os.path.exists(partial_path):
-            os.remove(partial_path)
-        print(f"  Accuracy: {summaries[2]['accuracy']:.4f}  Avg tokens: {summaries[2]['avg_tokens']:.1f}")
-
-    # ------------------------------------------------------------------ Group 3
-    print("\n=== Group 3: 7B No Agent ===")
-    cached = _load_group(save_dir, 3)
-    if cached is not None:
-        all_results[3] = cached
-        summaries[3] = _compute_metrics(cached)
-        print(f"  Loaded cached results ({len(cached)} questions). Accuracy: {summaries[3]['accuracy']:.4f}")
-    else:
-        model, tokenizer = _load_trained_model(checkpoint_7b)
-        results = _run_nonagentic(model, tokenizer, questions, solutions,
-                                  _format_trained_prompt, extract_tagged_answer)
-        del model, tokenizer
-        clear_gpu()
-        all_results[3] = results
-        summaries[3] = _compute_metrics(results)
-        _save_group(save_dir, 3, results)
-        print(f"  Accuracy: {summaries[3]['accuracy']:.4f}  Avg tokens: {summaries[3]['avg_tokens']:.1f}")
-
-    # ------------------------------------------------------------------ Group 4
-    print("\n=== Group 4: 7B + Agent ===")
-    cached = _load_group(save_dir, 4)
-    if cached is not None:
-        all_results[4] = cached
-        summaries[4] = _compute_metrics(cached)
-        print(f"  Loaded cached results ({len(cached)} questions). Accuracy: {summaries[4]['accuracy']:.4f}")
-    else:
-        model, tokenizer = _load_trained_model(checkpoint_7b)
-        prm_model, prm_tokenizer = load_prm()
-        partial_path = os.path.join(save_dir, "group_4_partial.jsonl")
-        results = _run_agentic_with_recovery(model, tokenizer, prm_model, prm_tokenizer,
-                                             questions, solutions, partial_path)
-        del model, tokenizer, prm_model, prm_tokenizer
-        clear_gpu()
-        all_results[4] = results
-        summaries[4] = _compute_metrics(results)
-        _save_group(save_dir, 4, results)
-        if os.path.exists(partial_path):
-            os.remove(partial_path)
-        print(f"  Accuracy: {summaries[4]['accuracy']:.4f}  Avg tokens: {summaries[4]['avg_tokens']:.1f}")
-
-    # ------------------------------------------------------------------ Group 5
-    print("\n=== Group 5: 14B Baseline ===")
-    cached = _load_group(save_dir, 5)
-    if cached is not None:
-        all_results[5] = cached
-        summaries[5] = _compute_metrics(cached)
-        print(f"  Loaded cached results ({len(cached)} questions). Accuracy: {summaries[5]['accuracy']:.4f}")
-    else:
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=BASELINE_MODEL_ID,
-            max_seq_length=MAX_SEQ_LENGTH,
-            dtype=None,
-            load_in_4bit=True,
-        )
-        FastLanguageModel.for_inference(model)
-        results = _run_nonagentic(model, tokenizer, questions, solutions,
-                                  _format_baseline_prompt, extract_last_integer)
-        del model, tokenizer
-        clear_gpu()
-        all_results[5] = results
-        summaries[5] = _compute_metrics(results)
-        _save_group(save_dir, 5, results)
-        print(f"  Accuracy: {summaries[5]['accuracy']:.4f}  Avg tokens: {summaries[5]['avg_tokens']:.1f}")
-
-    # ----------------------------------------------------------------- Save CSV
-    summary_path = os.path.join(save_dir, "benchmark_summary.csv")
-    with open(summary_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=[
-            "group_id", "group_name", "accuracy", "avg_tokens",
-            "tokens_per_correct", "correct", "total"
-        ])
+def _write_detailed_csv(save_dir: str, ordered_runs: list[dict],
+                        results_by_run: dict[str, list[dict]]) -> str:
+    path = os.path.join(save_dir, "benchmark_detailed.csv")
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_DETAILED_FIELDS)
         writer.writeheader()
-        for meta in GROUP_META:
-            gid = meta["id"]
-            writer.writerow({"group_id": gid, "group_name": meta["name"], **summaries[gid]})
-
-    detailed_path = os.path.join(save_dir, "benchmark_detailed.csv")
-    with open(detailed_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=[
-            "group_id", "group_name", "question_idx", "question",
-            "predicted", "expected", "correct", "tokens", "status"
-        ])
-        writer.writeheader()
-        for meta in GROUP_META:
-            gid = meta["id"]
-            for i, r in enumerate(all_results[gid]):
+        for run in ordered_runs:
+            for i, r in enumerate(results_by_run[run["run_id"]]):
                 writer.writerow({
-                    "group_id": gid,
-                    "group_name": meta["name"],
-                    "question_idx": i,
+                    "run_id": run["run_id"],
+                    "mode": run["mode"],
+                    "question_idx": r.get("question_idx", i),
                     "question": r.get("question", ""),
                     "predicted": r["predicted"],
                     "expected": r["expected"],
                     "correct": r["correct"],
                     "tokens": r["tokens"],
+                    "format_ok": r.get("format_ok", ""),
                     "status": r.get("status", ""),
                 })
+    return path
 
-    plot_path = os.path.join(save_dir, "benchmark_plot.png")
-    _plot_results(summaries, plot_path)
 
-    print(f"\nResults saved to {save_dir}")
+def _aggregate_and_write(save_dir: str, run_plan: list[dict]) -> dict:
+    """Läs alla {run_id}_results.json, räkna metrics, skriv CSV-er.
+    run_plan: list of {run_id, mode, checkpoint} i önskad CSV-ordning.
+    Returnerar {run_id: metrics_dict}."""
+    summaries = {}
+    results_by_run = {}
+    for run in run_plan:
+        with open(_result_path(save_dir, run["run_id"])) as f:
+            results = json.load(f)
+        results_by_run[run["run_id"]] = results
+        summaries[run["run_id"]] = _compute_metrics(results, is_agent=(run["mode"] == "agent"))
+
+    ordered_runs = [{**run, "metrics": summaries[run["run_id"]]} for run in run_plan]
+    summary_path = _write_summary_csv(save_dir, ordered_runs)
+    detailed_path = _write_detailed_csv(save_dir, ordered_runs, results_by_run)
+
+    print(f"\nResults written to {save_dir}")
     print(f"  Summary : {summary_path}")
     print(f"  Detailed: {detailed_path}")
-    print(f"  Plot    : {plot_path}")
     return summaries
 
 
-def _plot_results(summaries: dict, save_path: str):
-    fig, ax = plt.subplots(figsize=(9, 6))
+# ============================================================================
+# H0: Untrained baselines (no GRPO, same base models)
+# ============================================================================
 
-    for meta in GROUP_META:
-        gid = meta["id"]
-        s = summaries[gid]
-        x = s["avg_tokens"]
-        y = s["accuracy"] * 100
-        ax.scatter(x, y, color=meta["color"], marker=meta["marker"], s=120, zorder=3)
-        ax.annotate(
-            f"{meta['name']}\n{y:.1f}%  |  {s['tokens_per_correct']:.0f} tok/ans",
-            xy=(x, y),
-            xytext=(8, 4),
-            textcoords="offset points",
-            fontsize=8,
+def run_h0_benchmark(
+    save_dir: str,
+    n_questions: int = 100,
+    seed: int = 42,
+    runs: Optional[dict] = None,
+) -> dict:
+    """
+    Kör H0: otränade Qwen2.5-Instruct (1.5B + 3B) med din SYSTEM_PROMPT.
+    Detta är 0%-data-baseline för H1 — visar vad modellen kan utan GRPO.
+
+    Med SYSTEM_PROMPT (kräver <think><step>...</step></think><answer>) förväntas
+    accuracy vara LÅG och format_violation_rate HÖG. Det är poängen: format-
+    compliance och accuracy växer båda fram med GRPO-träning, och H0 är 0%-
+    punkten på den kurvan.
+
+    runs: dict {run_id: hf_model_id}. Default = H0_UNTRAINED_RUNS.
+
+    Returnerar {run_id: metrics_dict}.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    _check_drive_mounted(save_dir)
+    if not os.path.exists(_RUNNER):
+        raise FileNotFoundError(f"Runner script not found at {_RUNNER}.")
+
+    if runs is None:
+        runs = H0_UNTRAINED_RUNS
+
+    run_plan = [
+        {"run_id": run_id, "mode": "untrained_baseline", "checkpoint": hf_id}
+        for run_id, hf_id in runs.items()
+    ]
+
+    for run in run_plan:
+        _execute_run(run["run_id"], run["mode"], save_dir, n_questions, seed,
+                     checkpoint=run["checkpoint"])
+
+    return _aggregate_and_write(save_dir, run_plan)
+
+
+# ============================================================================
+# H1: Data efficiency × model size
+# ============================================================================
+
+# Förväntade nycklar i checkpoints-dict. Behåller deterministisk ordning i CSV.
+H1_EXPECTED_RUN_IDS = [
+    "1_5b_2pct", "1_5b_5pct", "1_5b_10pct",
+    "3b_2pct",   "3b_5pct",   "3b_10pct",
+]
+
+
+def run_h1_benchmark(
+    checkpoints: dict,
+    save_dir: str,
+    n_questions: int = 100,
+    seed: int = 42,
+) -> dict:
+    """
+    Kör H1: 6 no-agent-körningar (1.5B och 3B, vardera vid 2.5/5/10% av träningsdata).
+
+    checkpoints: dict från run-id till checkpoint-sökväg. Förväntade nycklar:
+        1_5b_2pct, 1_5b_5pct, 1_5b_10pct, 3b_2pct, 3b_5pct, 3b_10pct
+        (notera: 2pct för 2.5%-checkpointen — matchar int(0.025*100)=2 från
+        grpo_trainer.py). Saknade nycklar accepteras (för partiella körningar).
+
+    Returnerar {run_id: metrics_dict}.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    _check_drive_mounted(save_dir)
+
+    if not os.path.exists(_RUNNER):
+        raise FileNotFoundError(
+            f"Runner script not found at {_RUNNER}. "
+            "Make sure _run_eval.py lives next to benchmarker.py."
         )
 
-    # Legend for model size
-    size_patches = [
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="steelblue",  markersize=9, label="3B"),
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="seagreen",   markersize=9, label="7B"),
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="darkorange", markersize=9, label="14B (baseline)"),
-    ]
-    mode_patches = [
-        plt.Line2D([0], [0], marker="o", color="grey", linestyle="None", markersize=9, label="No agent"),
-        plt.Line2D([0], [0], marker="D", color="grey", linestyle="None", markersize=9, label="+ Agent"),
-        plt.Line2D([0], [0], marker="s", color="grey", linestyle="None", markersize=9, label="Zero-shot"),
-    ]
-    ax.legend(handles=size_patches + mode_patches, fontsize=8, loc="lower right")
+    # Bygg run plan i deterministisk ordning
+    run_plan = []
+    for run_id in H1_EXPECTED_RUN_IDS:
+        if run_id not in checkpoints:
+            print(f"Note: '{run_id}' not in checkpoints dict, skipping.")
+            continue
+        run_plan.append({
+            "run_id": run_id,
+            "mode": "no_agent",
+            "checkpoint": checkpoints[run_id],
+        })
 
-    ax.set_xlabel("Average tokens per question (input + output)", fontsize=11)
-    ax.set_ylabel("Accuracy (%)", fontsize=11)
-    ax.set_title("Accuracy vs Compute Cost — GSM8K (500 questions)", fontsize=12)
-    ax.grid(True, linestyle="--", alpha=0.4)
+    if not run_plan:
+        raise ValueError("No checkpoints provided to run_h1_benchmark.")
 
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150)
-    plt.close()
-    print(f"Plot saved to {save_path}")
+    # Kör alla
+    for run in run_plan:
+        _execute_run(run["run_id"], run["mode"], save_dir, n_questions, seed,
+                     checkpoint=run["checkpoint"])
+
+    return _aggregate_and_write(save_dir, run_plan)
+
+
+# ============================================================================
+# H2: Agentic compute vs SOTA baseline
+# ============================================================================
+
+def run_h2_benchmark(
+    agent_checkpoint: str,
+    save_dir: str,
+    n_questions: int = 100,
+    seed: int = 42,
+    skip_baseline: bool = False,
+) -> dict:
+    """
+    Kör H2: agent på vald checkpoint + Math-7B-Instruct zero-shot baseline.
+
+    agent_checkpoint: sökväg till checkpointen agenten ska köras på. Default
+        antagandet är 3B (10%) — sätt manuellt när du har H1-resultaten.
+
+    skip_baseline=True hoppar över baseline-körningen (användbart om du redan
+    har kört den i en annan run och vill spara tid).
+
+    Returnerar {run_id: metrics_dict}.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    _check_drive_mounted(save_dir)
+
+    if not os.path.exists(_RUNNER):
+        raise FileNotFoundError(f"Runner script not found at {_RUNNER}.")
+
+    if not agent_checkpoint:
+        raise ValueError("agent_checkpoint cannot be empty.")
+    if not os.path.exists(agent_checkpoint):
+        raise FileNotFoundError(f"agent_checkpoint not found: {agent_checkpoint}")
+
+    run_plan = [
+        {
+            "run_id": H2_AGENT_RUN_ID,
+            "mode": "agent",
+            "checkpoint": agent_checkpoint,
+        },
+    ]
+    if not skip_baseline:
+        run_plan.append({
+            "run_id": H2_BASELINE_RUN_ID,
+            "mode": "math_baseline",
+            "checkpoint": "",
+        })
+
+    for run in run_plan:
+        _execute_run(run["run_id"], run["mode"], save_dir, n_questions, seed,
+                     checkpoint=run["checkpoint"] or None)
+
+    return _aggregate_and_write(save_dir, run_plan)
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+def _check_drive_mounted(save_dir: str):
+    if save_dir.startswith("/content/drive") and not os.path.exists("/content/drive/MyDrive"):
+        raise RuntimeError(
+            "Google Drive does not appear to be mounted. "
+            "Run drive.mount('/content/drive') in your notebook before calling the benchmark."
+        )
