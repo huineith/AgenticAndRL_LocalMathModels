@@ -324,11 +324,11 @@ def run_grpo(
         args=GRPOConfig(
             num_generations=4,
             max_prompt_length=512,
-            max_completion_length=512,
+            max_completion_length=256,
             temperature=0.7,
             beta=0.04,
             learning_rate=2e-6,
-            per_device_train_batch_size=4,
+            per_device_train_batch_size=32,
             gradient_accumulation_steps=1,
             num_train_epochs=max_epochs,
             fp16=False,
