@@ -152,29 +152,25 @@ def main():
                 print(f"  [{i+1}/{len(questions)}] Running accuracy: {correct/(i+1):.4f}", flush=True)
 
     # =============================================================== 3. AGENT
+# =============================================================== 3. AGENT
     elif args.mode == "agent":
-        from agent import load_prm, run_agentic_loop
-        print(f"[{args.run_id}] Initializing PRM securely for Agentic Mode...", flush=True)
-        try:
-            prm_model, prm_tok = load_prm()
-        except Exception as prm_err:
-            import traceback
-            print(f"[{args.run_id}] CRITICAL: PRM failed to load inside subprocess!", file=sys.stderr)
-            traceback.print_exc(file=sys.stderr)
-            sys.exit(3)
+        # Vi importerar enbart run_agentic_loop nu eftersom PRM styrs inuti agent.py
+        from agent import run_agentic_loop
+        print(f"[{args.run_id}] Initializing Agentic Mode with isolated PRM worker...", flush=True)
 
         for i, (q, sol) in enumerate(zip(questions, solutions)):
-            res = run_agentic_loop(model, tokenizer, prm_model, prm_tok, q)
+            # Vi skickar None, None på PRM-platserna eftersom din nya agent.py 
+            # sköter all PRM-hantering självständigt via sin worker!
+            res = run_agentic_loop(model, tokenizer, None, None, q)
             expected = extract_gsm8k_ground_truth(sol)
             ok = res["answer"] is not None and res["answer"] == expected
             if ok:
                 correct += 1
             
-            # Slår ihop agentens validerade/korrigerade steg till en textsträng
             agent_chain = "\n".join(res.get("steps", []))
             results.append({
                 "question": q,
-                "completion": agent_chain,  # Sparar agentens tankesteg
+                "completion": agent_chain,
                 "predicted": res["answer"],
                 "expected": expected,
                 "correct": ok,
@@ -183,7 +179,6 @@ def main():
             })
             if (i + 1) % 10 == 0:
                 print(f"  [{i+1}/{len(questions)}] Running accuracy: {correct/(i+1):.4f}", flush=True)
-
     # ======================================================= 4. MATH_BASELINE
     elif args.mode == "math_baseline":
         for i, (q, sol) in enumerate(zip(questions, solutions)):
