@@ -1,6 +1,8 @@
 import os
 import json
 import torch
+from unsloth import FastLanguageModel, PatchFastRL
+PatchFastRL("GRPO", FastLanguageModel)
 from datasets import load_dataset, Dataset
 from transformers import (
     TrainingArguments,
@@ -8,8 +10,6 @@ from transformers import (
     TrainerControl,
     TrainerState,
 )
-from unsloth import FastLanguageModel, PatchFastRL
-PatchFastRL("GRPO", FastLanguageModel)
 from trl import GRPOTrainer, GRPOConfig, SFTTrainer, SFTConfig
 from rewards import compute_reward
 from utils import extract_tagged_answer, extract_gsm8k_ground_truth
