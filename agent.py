@@ -12,25 +12,21 @@ MAX_NEW_TOKENS = 512
 
 
 def load_prm():
-    """
-    Ladda PRM:en separat (transformers + 4-bit). PRM är en token-classifier
-    över <extra_0>-positioner, så vLLM ger ingen vinst här — vi kör den
-    direkt via transformers med bitsandbytes-quant för att hålla VRAM nere.
-    """
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.bfloat16,
-    )
+    print(f"Loading PRM model in pure bfloat16 on A100...", flush=True)
+    
+    # 1. Ladda tokenizern som vanligt
     tokenizer = AutoTokenizer.from_pretrained(PRM_MODEL_ID, trust_remote_code=True)
+    
+    # 2. Ladda modellen helt UTAN quantization_config eller bitsandbytes!
     model = AutoModel.from_pretrained(
         PRM_MODEL_ID,
-        quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=True,
+        torch_dtype=torch.bfloat16,  # Kör infödd 16-bit inferens på A100
+        device_map={"": 0},          # Lägg den på samma GPU-kontext som Unsloth
+        trust_remote_code=True
     )
+    
     model.eval()
     return model, tokenizer
-
 
 def score_steps(
     prm_model,
