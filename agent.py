@@ -15,7 +15,7 @@ def load_prm():
     print(f"Loading PRM model in pure bfloat16 on A100...", flush=True)
     
     # 1. Ladda tokenizern som vanligt
-    tokenizer = AutoTokenizer.from_pretrained(PRM_MODEL_ID, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(PRM_MODEL_ID, trust_remote_code=False)
     
     # 2. Ladda modellen helt UTAN quantization_config eller bitsandbytes!
     model = AutoModel.from_pretrained(
