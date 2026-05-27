@@ -1,5 +1,5 @@
 import torch
-from transformers import AutoModel, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from utils import extract_steps, extract_tagged_answer
 from prompts import SYSTEM_PROMPT, PRM_SYSTEM
@@ -12,17 +12,17 @@ MAX_NEW_TOKENS = 512
 
 
 def load_prm():
-    print(f"Loading PRM model in pure bfloat16 on A100...", flush=True)
+    print(f"Loading PRM model securely via native transformers pipeline...", flush=True)
     
-    # 1. Ladda tokenizern som vanligt
+    # Sätt trust_remote_code=False för att neka den trasiga externa modellkoden
     tokenizer = AutoTokenizer.from_pretrained(PRM_MODEL_ID, trust_remote_code=False)
     
-    # 2. Ladda modellen helt UTAN quantization_config eller bitsandbytes!
-    model = AutoModel.from_pretrained(
+    # Använd AutoModelForSequenceClassification för att aktivera Hugging Faces inbyggda, stabila Qwen2-kod
+    model = AutoModelForSequenceClassification.from_pretrained(
         PRM_MODEL_ID,
         torch_dtype=torch.bfloat16,  # Kör infödd 16-bit inferens på A100
         device_map={"": 0},          # Lägg den på samma GPU-kontext som Unsloth
-        trust_remote_code=False
+        trust_remote_code=False      # Tvingar transformers att använda sin egen interna arkitektur
     )
     
     model.eval()
