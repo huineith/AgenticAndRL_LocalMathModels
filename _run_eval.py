@@ -42,7 +42,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", type=str, required=True)
     parser.add_argument("--mode", type=str, required=True, choices=["no_agent", "agent", "math_baseline", "untrained_baseline"])
-    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument("--checkpoint", type=str, default="")
     parser.add_argument("--save-dir", type=str, required=True)
     parser.add_argument("--n-questions", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
