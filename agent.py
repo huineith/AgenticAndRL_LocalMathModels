@@ -22,7 +22,7 @@ def load_prm():
         PRM_MODEL_ID,
         torch_dtype=torch.bfloat16,  # Kör infödd 16-bit inferens på A100
         device_map={"": 0},          # Lägg den på samma GPU-kontext som Unsloth
-        trust_remote_code=True
+        trust_remote_code=False
     )
     
     model.eval()
