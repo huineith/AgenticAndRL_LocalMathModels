@@ -11,61 +11,35 @@ MAX_RETRIES = 3
 MAX_NEW_TOKENS = 512
 
 
-def load_prm():
-    print(f"Loading PRM model securely via native transformers pipeline...", flush=True)
-    
-    # Sätt trust_remote_code=False för att neka den trasiga externa modellkoden
-    tokenizer = AutoTokenizer.from_pretrained(PRM_MODEL_ID, trust_remote_code=False)
-    
-    # Använd AutoModelForSequenceClassification för att aktivera Hugging Faces inbyggda, stabila Qwen2-kod
-    model = AutoModelForSequenceClassification.from_pretrained(
-        PRM_MODEL_ID,
-        torch_dtype=torch.bfloat16,  # Kör infödd 16-bit inferens på A100
-        device_map={"": 0},          # Lägg den på samma GPU-kontext som Unsloth
-        trust_remote_code=False      # Tvingar transformers att använda sin egen interna arkitektur
-    )
-    
-    model.eval()
-    return model, tokenizer
-
-def score_steps(
-    prm_model,
-    prm_tokenizer,
-    question: str,
-    steps: list[str],
-) -> list[float]:
+def score_steps(prm_model, prm_tokenizer, question: str, steps: list[str]) -> list[float]:
     if not steps:
         return []
 
-    messages = [
-        {"role": "system", "content": PRM_SYSTEM},
-        {"role": "user", "content": question},
-        {"role": "assistant", "content": "<extra_0>".join(steps) + "<extra_0>"},
-    ]
-    input_text = prm_tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=False
+    import subprocess
+    import json
+    import sys
+
+    # Förbered data som ska skickas till vår isolerade worker
+    payload = {"question": question, "steps": steps}
+
+    # Starta vår prm_worker i en helt ren miljö
+    process = subprocess.Popen(
+        ["python3", "/content/prm_worker.py"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
     )
-    inputs = prm_tokenizer(input_text, return_tensors="pt").to(prm_model.device)
-    input_ids = inputs["input_ids"]
 
-    step_sep_id = prm_tokenizer.convert_tokens_to_ids("<extra_0>")
-    token_masks = (input_ids == step_sep_id)  # [1, seq_len]
+    # Skicka data och vänta på svar
+    stdout, stderr = process.communicate(input=json.dumps(payload))
 
-    with torch.no_grad():
-        outputs = prm_model(**inputs)
+    if process.returncode != 0:
+        print(f"  [CRITICAL] PRM Worker failed: {stderr}", file=sys.stderr)
+        raise ValueError(f"PRM Worker crashed with exit code {process.returncode}")
 
-    # logits shape: [1, seq_len, 2] — negative and positive class per position
-    logits = outputs.logits
-    step_logits = logits[token_masks]  # [num_steps, 2]
-    scores = torch.softmax(step_logits.float(), dim=-1)[:, 1].tolist()
-
-    if len(scores) != len(steps):
-        raise ValueError(
-            f"PRM returned {len(scores)} scores for {len(steps)} steps. "
-            "Unexpected <extra_0> tokens found outside step content — "
-            "check that question/system text does not contain this token."
-        )
-
+    # Läs av poängen som returnerades
+    scores = json.loads(stdout.strip())
     return scores
 
 
