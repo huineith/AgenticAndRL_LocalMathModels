@@ -294,14 +294,16 @@ def run_grpo(
     seed: int = 42,
 ):
     pct = int(data_fraction * 100)
-    if "3B" in model_name:
+    if "1.5B" in model_name:      # Lägg till matchning för 1.5B
+        size_tag = "1_5b"
+    elif "3B" in model_name:
         size_tag = "3b"
     elif "7B" in model_name:
         size_tag = "7b"
     else:
         raise ValueError(
             f"Cannot infer model size from name '{model_name}'. "
-            "Expected '3B' or '7B' in the model name string."
+            "Expected '1.5B', '3B' or '7B' in the model name string."
         )
     save_path = f"{save_dir}/grpo_{size_tag}_{pct}pct"
 
