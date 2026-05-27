@@ -24,3 +24,10 @@ BASELINE_PROMPT_TEMPLATE = (
 MATH_BASELINE_SYSTEM = (
     "Please reason step by step, and put your final answer within \\boxed{}."
 )
+
+MATH_BASELINE_TEMPLATE = (
+    "<messages>"
+    "<message role='system'>{system_prompt}</message>"
+    "<message role='user'>{question}</message>"
+    "</messages>"
+)
