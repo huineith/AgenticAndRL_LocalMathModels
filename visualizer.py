@@ -8,6 +8,7 @@ import json
 import pandas as pd
 import matplotlib.pyplot as plt
 
+
 # =====================================================================
 # 1. GRAF: GRPO TRÄNINGSKURVOR (Baserat på Epoch)
 # =====================================================================
@@ -36,7 +37,6 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
     file_found = False
 
     for size, pct in EXPECTED_RUNS:
-        # 1. Kolla standardfilen i roten först
         root_filename = f"grpo_{size}_{pct}pct_metrics.json"
         root_path = os.path.join(drive_dir, root_filename)
         found_path = None
@@ -73,7 +73,7 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
             metrics = json.load(f)
 
         ax_reward = plot_mapping[size]["reward"]
-        ax_acc = plot_mapping[size]["acc"]
+        ax_acc    = plot_mapping[size]["acc"]
 
         if isinstance(metrics, dict):
             log_history = metrics.get("log_history", [])
@@ -84,11 +84,11 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
         if not isinstance(log_history, list):
             log_history = []
 
-        # --- 1. Reward-kurvan (x = epoch) ---
+        # --- Reward-kurvan (x = epoch) ---
         reward_epochs = []
         rewards = []
         for e in log_history:
-            ep  = e.get("epoch")
+            ep    = e.get("epoch")
             r_val = e.get("reward", e.get("train/reward", e.get("rewards/chosen", None)))
             if ep is not None and r_val is not None:
                 reward_epochs.append(ep)
@@ -98,17 +98,21 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
             ax_reward.plot(reward_epochs, rewards, "-", color=PCT_COLOR[pct],
                            linewidth=1.5, label=PCT_LABEL[pct])
 
-        # --- 2. Validerings-Accuracy (x = epoch) ---
+        # --- Validerings-Accuracy (x = epoch) ---
         acc_hist = metrics.get("val_accuracy_history", []) if isinstance(metrics, dict) else []
         if not acc_hist:
             for e in log_history:
                 if "eval_accuracy" in e or "val_accuracy" in e:
-                    acc_val  = e.get("eval_accuracy", e.get("val_accuracy"))
+                    acc_val = e.get("eval_accuracy", e.get("val_accuracy"))
                     acc_hist.append({"epoch": e.get("epoch", 0), "val_accuracy": acc_val})
 
         if acc_hist:
             epochs = [h["epoch"] for h in acc_hist]
-            accs   = [h["val_accuracy"] * (100 if h["val_accuracy"] <= 1.0 else 1) for h in acc_hist]
+            # FIX: normalisera konsekvent — konvertera till % endast om värdet är i [0, 1]
+            accs = [
+                h["val_accuracy"] * 100 if h["val_accuracy"] <= 1.0 else h["val_accuracy"]
+                for h in acc_hist
+            ]
             ax_acc.plot(epochs, accs, "-o", color=PCT_COLOR[pct],
                         markersize=6, linewidth=2, label=PCT_LABEL[pct])
 
@@ -157,14 +161,12 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
 
     for _, r in df.iterrows():
         run_id = str(r["run_id"]).lower()
-        mode = str(r.get("mode", "")).lower()
+        mode   = str(r.get("mode", "")).lower()
 
-        # Exkludera agent-körningar och den externa math-7b baslinjen
         is_agent = (mode == "agent") or (run_id.endswith("_agent")) or ("agent" in run_id)
         if is_agent or "7b" in run_id:
             continue
 
-        # Identifiera modellstorlek robust
         if "1_5b" in run_id or "1.5b" in run_id:
             size = 1.5
         elif "3b" in run_id:
@@ -172,23 +174,24 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
         else:
             continue
 
-        # OBS: Viktigt att matcha "10pct" FÖRE "0pct" eftersom "10pct" innehåller strängen "0pct"
+        # OBS: matcha "10pct" FÖRE "5pct"/"2pct" för att undvika delsträngskollisioner
         if "10pct" in run_id or "10%" in run_id:
             pct = 10.0
         elif "5pct" in run_id or "5%" in run_id:
             pct = 5.0
         elif "2pct" in run_id or "2.5" in run_id:
             pct = 2.5
-        elif "untrained" in run_id or "h0" in run_id or "0pct" in run_id or "no training" in run_id or "no_training" in run_id or "0%" in run_id:
+        elif ("untrained" in run_id or "h0" in run_id or "0pct" in run_id
+              or "no training" in run_id or "no_training" in run_id or "0%" in run_id):
             pct = 0.0
         else:
             continue
 
-        plot_data.append({
-            "Size": size,
-            "Data_Pct": pct,
-            "Accuracy": float(r["accuracy"]) * 100
-        })
+        raw_acc = float(r["accuracy"])
+        # FIX: normalisera till % oavsett om källdata är i [0,1] eller redan i %
+        acc_pct = raw_acc * 100 if raw_acc <= 1.0 else raw_acc
+
+        plot_data.append({"Size": size, "Data_Pct": pct, "Accuracy": acc_pct})
 
     if not plot_data:
         print("\n[VARNING] Kunde inte matcha rader i din DataFrame till H1-skalningen. Dina tillgängliga run_ids är:")
@@ -199,24 +202,27 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    # Linje för 1.5B
-    df_15 = plot_df[plot_df["Size"] == 1.5].drop_duplicates(subset=["Data_Pct"], keep="last")
+    # FIX: sortera på Data_Pct innan drop_duplicates så att "last" alltid är högst pct
+    df_15 = (plot_df[plot_df["Size"] == 1.5]
+             .sort_values("Data_Pct")
+             .drop_duplicates(subset=["Data_Pct"], keep="last"))
     if not df_15.empty:
-        ax.plot(df_15["Data_Pct"], df_15["Accuracy"], "-o", color="#e74c3c", linewidth=2.5, label="Qwen 1.5B + GRPO", markersize=8)
+        ax.plot(df_15["Data_Pct"], df_15["Accuracy"], "-o",
+                color="#e74c3c", linewidth=2.5, label="Qwen 1.5B + GRPO", markersize=8)
 
-    # Linje för 3B
-    df_3 = plot_df[plot_df["Size"] == 3.0].drop_duplicates(subset=["Data_Pct"], keep="last")
+    df_3 = (plot_df[plot_df["Size"] == 3.0]
+            .sort_values("Data_Pct")
+            .drop_duplicates(subset=["Data_Pct"], keep="last"))
     if not df_3.empty:
-        ax.plot(df_3["Data_Pct"], df_3["Accuracy"], "-o", color="#3498db", linewidth=2.5, label="Qwen 3B + GRPO", markersize=8)
+        ax.plot(df_3["Data_Pct"], df_3["Accuracy"], "-o",
+                color="#3498db", linewidth=2.5, label="Qwen 3B + GRPO", markersize=8)
 
     ax.set_xlabel("Mängd GRPO-träningsdata (%)", fontsize=11)
     ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
-    ax.set_title("Hypotes 1: Skalningslagar & Dataeffektivitet under GRPO", fontsize=12, fontweight="bold")
-    
-    # Snygga till x-axeln enligt önskemål
+    ax.set_title("Hypotes 1: Skalningslagar & Dataeffektivitet under GRPO",
+                 fontsize=12, fontweight="bold")
     ax.set_xticks([0, 2.5, 5.0, 10.0])
     ax.set_xticklabels(["No Training", "2.5%", "5%", "10%"])
-    
     ax.grid(True, linestyle="--", alpha=0.5)
     ax.legend(loc="lower right")
 
@@ -249,37 +255,30 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     for _, r in df.iterrows():
         run_id = str(r["run_id"]).lower().strip()
         if run_id in FOREGROUND_IDS:
-            # Mappa run_id till style-nyckel
-            if run_id == "math_7b_baseline":
-                foreground_rows.append((r, "math_7b"))
-            else:
-                foreground_rows.append((r, run_id))
+            style_key = "math_7b" if run_id == "math_7b_baseline" else run_id
+            foreground_rows.append((r, style_key))
         else:
             background_rows.append(r)
 
     # --- 1. Bakgrund (skuggade, utan label) ---
     for r in background_rows:
-        acc    = float(r["accuracy"]) * 100
-        tokens = float(r.get("avg_tokens", 0))
+        raw_acc = float(r["accuracy"])
+        acc     = raw_acc * 100 if raw_acc <= 1.0 else raw_acc
+        tokens  = float(r.get("avg_tokens", 0))
         ax.scatter(tokens, acc,
-                   color="#bdc3c7",
-                   marker="o",
-                   s=50,
-                   alpha=0.3,
-                   edgecolors="none",
-                   zorder=2)
+                   color="#bdc3c7", marker="o", s=50,
+                   alpha=0.3, edgecolors="none", zorder=2)
 
-    # --- 2. Förgrund (fokusmodeller med labels) ---
-    labels_added = set()
-
-    # Samla förgrundspunkter för kollisionsdetektering
+    # --- 2. Förgrund: samla punkter ---
     fg_points = []
     for r, key in foreground_rows:
-        acc    = float(r["accuracy"]) * 100
-        tokens = float(r.get("avg_tokens", 0))
+        raw_acc = float(r["accuracy"])
+        acc     = raw_acc * 100 if raw_acc <= 1.0 else raw_acc
+        tokens  = float(r.get("avg_tokens", 0))
         fg_points.append((tokens, acc, key, str(r["run_id"])))
 
     # Rita scatter-punkterna
+    labels_added = set()
     for tokens, acc, key, run_id in fg_points:
         style = STYLE[key]
         label = style["label"] if key not in labels_added else "_nolegend_"
@@ -293,62 +292,58 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
                    linewidths=1.2,
                    zorder=4)
 
-    # Hämta axelgränser EFTER att alla punkter ritats (matplotlib justerar dem automatiskt)
+    ax.margins(0.15)
     ax.autoscale_view()
     x_min, x_max = ax.get_xlim()
     y_min, y_max = ax.get_ylim()
     x_range = x_max - x_min
     y_range = y_max - y_min
 
-    # Annotationer med smart kollisions- och kantdetektering
-    placed_boxes = []  # [(x0, y0, x1, y1)] i datakoordinater
+    # Annotationer med kollisions- och kantdetektering
+    placed_boxes = []
 
     def overlaps(bx0, by0, bx1, by1):
-        """Kontrollerar om en ny box krockar med redan placerade boxar."""
         for (ox0, oy0, ox1, oy1) in placed_boxes:
             if bx0 < ox1 and bx1 > ox0 and by0 < oy1 and by1 > oy0:
                 return True
         return False
 
-    # Kandidatförskjutningar att prova i ordning (höger, vänster, upp, ner, diagonaler)
     OFFSETS = [
-        ( 12,  6, "left",  "bottom"),
-        (-12,  6, "right", "bottom"),
-        ( 12, -6, "left",  "top"),
-        (-12, -6, "right", "top"),
-        (  0, 14, "center","bottom"),
-        (  0,-14, "center","top"),
-        ( 18,  0, "left",  "center"),
-        (-18,  0, "right", "center"),
+        ( 12,  6, "left",   "bottom"),
+        (-12,  6, "right",  "bottom"),
+        ( 12, -6, "left",   "top"),
+        (-12, -6, "right",  "top"),
+        (  0, 14, "center", "bottom"),
+        (  0,-14, "center", "top"),
+        ( 18,  0, "left",   "center"),
+        (-18,  0, "right",  "center"),
     ]
 
-    # Uppskattad textstorlek i datakoordinater (justeras efter figurens storlek)
     fig_w, fig_h = fig.get_size_inches()
-    char_w_data = x_range / (fig_w * 8.5)   # ~8.5 tecken per tum vid fontsize 9
-    line_h_data = y_range / (fig_h * 6.5)   # ~6.5 rader per tum vid fontsize 9
+    char_w_data  = x_range / (fig_w * 8.5)
+    line_h_data  = y_range / (fig_h * 6.5)
 
     for tokens, acc, key, run_id in fg_points:
-        style  = STYLE[key]
-        text   = f"{run_id}\n{acc:.1f}%"
-        lines  = text.split("\n")
-        tw     = max(len(l) for l in lines) * char_w_data
-        th     = len(lines) * line_h_data
+        style = STYLE[key]
+        text  = f"{run_id}\n{acc:.1f}%"
+        lines = text.split("\n")
+        tw    = max(len(l) for l in lines) * char_w_data
+        th    = len(lines) * line_h_data
 
-        chosen_xoff, chosen_yoff, chosen_ha, chosen_va = OFFSETS[0]  # fallback
+        # FIX: starta med None för att spåra om vi faktiskt hittar en giltig position
+        chosen = None
 
         for xoff_pt, yoff_pt, ha, va in OFFSETS:
-            # Konvertera offset från punkter till datakoordinater
             xoff_data = xoff_pt / 72 * (x_range / fig_w)
             yoff_data = yoff_pt / 72 * (y_range / fig_h)
 
-            # Ankarpunkt för textboxen beroende på ha/va
             if ha == "left":
                 bx0 = tokens + xoff_data
                 bx1 = bx0 + tw
             elif ha == "right":
                 bx1 = tokens + xoff_data
                 bx0 = bx1 - tw
-            else:  # center
+            else:
                 bx0 = tokens + xoff_data - tw / 2
                 bx1 = tokens + xoff_data + tw / 2
 
@@ -358,34 +353,43 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
             elif va == "top":
                 by1 = acc + yoff_data
                 by0 = by1 - th
-            else:  # center
+            else:
                 by0 = acc + yoff_data - th / 2
                 by1 = acc + yoff_data + th / 2
 
-            # Kontrollera att boxen är inom axelgränserna (med lite marginal)
             margin_x = x_range * 0.01
             margin_y = y_range * 0.01
             in_bounds = (bx0 >= x_min + margin_x and bx1 <= x_max - margin_x and
                          by0 >= y_min + margin_y and by1 <= y_max - margin_y)
 
             if in_bounds and not overlaps(bx0, by0, bx1, by1):
-                chosen_xoff, chosen_yoff, chosen_ha, chosen_va = xoff_pt, yoff_pt, ha, va
-                placed_boxes.append((bx0, by0, bx1, by1))
+                chosen = (xoff_pt, yoff_pt, ha, va, bx0, by0, bx1, by1)
                 break
-        else:
-            # Ingen perfekt plats hittades — använd fallback och registrera ändå
-            placed_boxes.append((bx0, by0, bx1, by1))
+
+        # FIX: om ingen position hittades, räkna ut fallback-boxen explicit (OFFSETS[0])
+        if chosen is None:
+            xoff_pt, yoff_pt, ha, va = OFFSETS[0]
+            xoff_data = xoff_pt / 72 * (x_range / fig_w)
+            yoff_data = yoff_pt / 72 * (y_range / fig_h)
+            bx0 = tokens + xoff_data
+            bx1 = bx0 + tw
+            by0 = acc + yoff_data
+            by1 = by0 + th
+            chosen = (xoff_pt, yoff_pt, ha, va, bx0, by0, bx1, by1)
+
+        xoff_pt, yoff_pt, ha, va, bx0, by0, bx1, by1 = chosen
+        placed_boxes.append((bx0, by0, bx1, by1))
 
         ax.annotate(
             text,
             xy=(tokens, acc),
-            xytext=(chosen_xoff, chosen_yoff),
+            xytext=(xoff_pt, yoff_pt),
             textcoords="offset points",
             fontsize=9,
             fontweight="bold",
             color=style["color"],
-            horizontalalignment=chosen_ha,
-            verticalalignment=chosen_va,
+            horizontalalignment=ha,
+            verticalalignment=va,
             zorder=5
         )
 
@@ -394,7 +398,6 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     ax.set_title("H2: Test-Time Compute — Agent vs. Tränad Bas vs. 7B Baseline",
                  fontsize=12, fontweight="bold")
 
-    ax.margins(0.15)
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="#eaeded")
 
@@ -410,9 +413,10 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     if foreground_rows:
         summary_df = pd.DataFrame([item[0] for item in foreground_rows])
         for _, r in summary_df.sort_values("accuracy", ascending=False).iterrows():
-            run_id = str(r["run_id"])
-            acc    = float(r["accuracy"])
-            tokens = float(r.get("avg_tokens", 0))
-            tok_per_correct = (tokens / acc) if acc > 0 else float("inf")
-            print(f"  {run_id:<25} {acc*100:>5.1f}%  {tokens:>9.0f}  {tok_per_correct:>12.0f}")
+            run_id  = str(r["run_id"])
+            raw_acc = float(r["accuracy"])
+            acc     = raw_acc if raw_acc > 1.0 else raw_acc * 100
+            tokens  = float(r.get("avg_tokens", 0))
+            tok_per_correct = (tokens / (acc / 100)) if acc > 0 else float("inf")
+            print(f"  {run_id:<25} {acc:>5.1f}%  {tokens:>9.0f}  {tok_per_correct:>12.0f}")
     print("=" * 60)
