@@ -1,7 +1,7 @@
 """
 visualizer.py
 Gemensam modul för interaktiv visualisering i Jupyter Notebook.
-Helt befriad från CLI-kod. Baserad på 'Epoch' för träningskurvor.
+Helt befriat från CLI-kod. Baserad på 'Epoch' för träningskurvor.
 """
 import os
 import json
@@ -230,18 +230,15 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
 # =====================================================================
 def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     """
-    Jämför Agenten, 3B 10% Baseline och SOTA Math-7B Baseline i förgrunden.
-    Alla andra körningar ritas ut som skuggade gråa punkter i bakgrunden.
-    
-    X-axel: genomsnittliga tokens per fråga (compute).
-    Y-axel: GSM8K Accuracy (%).
+    Jämför Agenten, den rena 3B 10% Baslinjen och SOTA Math-7B Baseline i förgrunden.
+    Alla andra (t.ex. grpo-träningssteg) blir skuggade gråa punkter i bakgrunden.
     """
     fig, ax = plt.subplots(figsize=(10, 6))
 
     # Färg och stil för de tre fokusmodellerna (Förgrund)
     STYLE = {
         "agent":    {"color": "#e67e22", "marker": "o", "s": 160, "label": "Agent Loop (3B 10% + PRM)"}, # Orange
-        "3b_10pct": {"color": "#2ecc71", "marker": "s", "s": 140, "label": "3B 10% (ingen agent)"},     # Grön
+        "3b_10pct": {"color": "#2ecc71", "marker": "s", "s": 140, "label": "3B 10% Baseline (utan agent)"},# Grön
         "math_7b":  {"color": "#9b59b6", "marker": "X", "s": 200, "label": "SOTA Baseline (Math-7B)"},  # Lila
     }
 
@@ -249,7 +246,11 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     foreground_rows = []
     background_rows = []
 
-    # Dela upp datan i förgrund och bakgrund för att kontrollera lager (zorder)
+    # Max- och minvärden för att kunna räkna ut smart textplacering i efterhand
+    max_tokens = df["avg_tokens"].max() if "avg_tokens" in df.columns else 1000
+    max_acc = (df["accuracy"].max() * 100) if "accuracy" in df.columns else 100
+
+    # Förbättrad och strikt sorteringslogik
     for _, r in df.iterrows():
         mode   = str(r.get("mode", "")).lower()
         run_id = str(r["run_id"]).lower()
@@ -258,7 +259,8 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
             foreground_rows.append((r, "agent"))
         elif "math_baseline" in mode or "math_7b" in run_id or "math7b" in run_id:
             foreground_rows.append((r, "math_7b"))
-        elif "3b_10pct" in run_id:
+        # Exakt matchning för den rena 3b_10pct baslinjen (får inte vara en aktiv grpo-träningskörning)
+        elif run_id == "3b_10pct" or run_id == "3b_10pct_baseline" or ( "3b_10pct" in run_id and "grpo" not in run_id and "epoch" not in run_id and "best" not in run_id ):
             foreground_rows.append((r, "3b_10pct"))
         else:
             background_rows.append(r)
@@ -273,10 +275,10 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
                    label="Övriga modeller (Bakgrund)" if not bg_label_added else "_nolegend_",
                    color="#bdc3c7", # Ljusgrå
                    marker="o",
-                   s=60,
-                   alpha=0.4,       # Genomskinlig
+                   s=50,
+                   alpha=0.3,       # Ökad transparens för bättre skuggning
                    edgecolors="none",
-                   zorder=2)        # Lägre zorder = hamnar bakom
+                   zorder=2)        # Hamnar i bakgrunden
         bg_label_added = True
 
     # --- 2. Rita FÖRGRUNDEN (De tre fokusmodellerna) ---
@@ -296,17 +298,35 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
                    s=style["s"],
                    edgecolors="black",
                    linewidths=1.2,
-                   zorder=4)        # Högre zorder = hamnar framför allt annat
+                   zorder=4)        # Hamnar framför allt annat
 
-        # Annotera förgrundspunkterna tydligt
+        # --- Smart, dynamisk textplacering för att undvika krockar med ramen ---
+        # Standardförskjutning (höger och lite upp)
+        x_offset = 12
+        y_offset = 2
+        ha_align = "left"
+        va_align = "bottom"
+
+        # Om punkten ligger väldigt nära högerkanten, flytta texten till vänster om punkten
+        if tokens > max_tokens * 0.82:
+            x_offset = -12
+            ha_align = "right"
+            
+        # Om punkten ligger väldigt högt upp, skjut ner texten något
+        if acc > max_acc * 0.92:
+            y_offset = -12
+            va_align = "top"
+
         ax.annotate(
             f"{run_id}\n{acc:.1f}%",
             xy=(tokens, acc),
-            xytext=(10, 2),
+            xytext=(x_offset, y_offset),
             textcoords="offset points",
             fontsize=9,
             fontweight="bold",
             color=style["color"],
+            horizontalalignment=ha_align,
+            verticalalignment=va_align,
             zorder=5
         )
 
@@ -314,6 +334,10 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
     ax.set_title("H2: Test-Time Compute — Agent vs. Tränad Bas vs. 7B Baseline",
                  fontsize=12, fontweight="bold")
+    
+    # Lägg till lite extra marginaler runt grafen så att ingen text klipps av mot kanterna
+    ax.set_margins(0.12)
+    
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="#eaeded")
 
