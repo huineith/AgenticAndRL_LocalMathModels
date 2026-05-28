@@ -394,7 +394,7 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     ax.set_title("H2: Test-Time Compute — Agent vs. Tränad Bas vs. 7B Baseline",
                  fontsize=12, fontweight="bold")
 
-    ax.set_margins(0.15)
+    ax.margins(0.15)
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="#eaeded")
 
