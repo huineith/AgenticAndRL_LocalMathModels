@@ -139,7 +139,7 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
             if by_label:
                 ax.legend(by_label.values(), by_label.keys(), loc="lower right")
 
-    plt.suptitle("GRPO Alignment Performance", fontsize=14, fontweight="bold", y=0.99)
+    plt.suptitle("GRPO Training statistics", fontsize=14, fontweight="bold", y=0.99)
     plt.tight_layout()
 
     if save_path:
@@ -219,12 +219,12 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
 
     ax.set_xlabel("Mängd GRPO-träningsdata (%)", fontsize=11)
     ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
-    ax.set_title("Hypotes 1: Skalningslagar & Dataeffektivitet under GRPO",
+    ax.set_title("Accuracy per datafraction",
                  fontsize=12, fontweight="bold")
     ax.set_xticks([0, 2.5, 5.0, 10.0])
     ax.set_xticklabels(["No Training", "2.5%", "5%", "10%"])
     ax.grid(True, linestyle="--", alpha=0.5)
-    ax.legend(loc="lower right")
+    ax.legend(loc="upper right")
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
@@ -469,11 +469,11 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
 
     ax.set_xlabel("Genomsnittligt antal tokens per fråga (Compute)", fontsize=11)
     ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
-    ax.set_title("H2: Test-Time Compute — Agent vs. Tränad Bas vs. 7B Baseline",
+    ax.set_title("H2: Compute accuracy and efficiency",
                  fontsize=12, fontweight="bold")
 
     ax.grid(True, linestyle="--", alpha=0.3)
-    ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="#eaeded")
+    ax.legend(loc="upper right", frameon=True, facecolor="white", edgecolor="#eaeded")
 
     plt.tight_layout()
     if save_path:
