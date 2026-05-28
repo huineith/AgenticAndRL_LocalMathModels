@@ -230,40 +230,63 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
 # =====================================================================
 def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     """
-    Jämför enbart Agenten, 3B 10% Baseline (utan agent) och SOTA Math-7B Baseline.
+    Jämför Agenten, 3B 10% Baseline och SOTA Math-7B Baseline i förgrunden.
+    Alla andra körningar ritas ut som skuggade gråa punkter i bakgrunden.
+    
     X-axel: genomsnittliga tokens per fråga (compute).
     Y-axel: GSM8K Accuracy (%).
     """
-    fig, ax = plt.subplots(figsize=(9, 6))
+    fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Färg och markör per kategori
+    # Färg och stil för de tre fokusmodellerna (Förgrund)
     STYLE = {
-        "agent":    {"color": "#2ecc71", "marker": "o", "s": 150, "label": "Agent Loop (3B 10% + PRM)"},
-        "math_7b":  {"color": "#9b59b6", "marker": "X", "s": 180, "label": "SOTA Baseline (Math-7B)"},
-        "3b_10pct": {"color": "#3498db", "marker": "s", "s": 130, "label": "3B 10% (ingen agent)"},
+        "agent":    {"color": "#e67e22", "marker": "o", "s": 160, "label": "Agent Loop (3B 10% + PRM)"}, # Orange
+        "3b_10pct": {"color": "#2ecc71", "marker": "s", "s": 140, "label": "3B 10% (ingen agent)"},     # Grön
+        "math_7b":  {"color": "#9b59b6", "marker": "X", "s": 200, "label": "SOTA Baseline (Math-7B)"},  # Lila
     }
 
     labels_added = set()
-    plotted_rows = []
+    foreground_rows = []
+    background_rows = []
 
+    # Dela upp datan i förgrund och bakgrund för att kontrollera lager (zorder)
     for _, r in df.iterrows():
         mode   = str(r.get("mode", "")).lower()
         run_id = str(r["run_id"]).lower()
+
+        if "agent" in mode or "agent" in run_id:
+            foreground_rows.append((r, "agent"))
+        elif "math_baseline" in mode or "math_7b" in run_id or "math7b" in run_id:
+            foreground_rows.append((r, "math_7b"))
+        elif "3b_10pct" in run_id:
+            foreground_rows.append((r, "3b_10pct"))
+        else:
+            background_rows.append(r)
+
+    # --- 1. Rita BAKGRUNDEN först (Skuggade modeller) ---
+    bg_label_added = False
+    for r in background_rows:
         acc    = float(r["accuracy"]) * 100
         tokens = float(r.get("avg_tokens", 0))
+        
+        ax.scatter(tokens, acc,
+                   label="Övriga modeller (Bakgrund)" if not bg_label_added else "_nolegend_",
+                   color="#bdc3c7", # Ljusgrå
+                   marker="o",
+                   s=60,
+                   alpha=0.4,       # Genomskinlig
+                   edgecolors="none",
+                   zorder=2)        # Lägre zorder = hamnar bakom
+        bg_label_added = True
 
-        # Strikt filtrering: tillåt ENBART de tre önskade kategorierna
-        if "agent" in mode or "agent" in run_id:
-            key = "agent"
-        elif "math_baseline" in mode or "math_7b" in run_id or "math7b" in run_id:
-            key = "math_7b"
-        elif "3b_10pct" in run_id and "agent" not in mode and "agent" not in run_id:
-            key = "3b_10pct"
-        else:
-            continue
+    # --- 2. Rita FÖRGRUNDEN (De tre fokusmodellerna) ---
+    for r, key in foreground_rows:
+        acc    = float(r["accuracy"]) * 100
+        tokens = float(r.get("avg_tokens", 0))
+        run_id = str(r["run_id"])
 
         style = STYLE[key]
-        label = style["label"] if (style["label"] and key not in labels_added) else "_nolegend_"
+        label = style["label"] if key not in labels_added else "_nolegend_"
         labels_added.add(key)
 
         ax.scatter(tokens, acc,
@@ -272,39 +295,40 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
                    marker=style["marker"],
                    s=style["s"],
                    edgecolors="black",
-                   zorder=3)
+                   linewidths=1.2,
+                   zorder=4)        # Högre zorder = hamnar framför allt annat
 
-        # Annotera de valda punkterna
+        # Annotera förgrundspunkterna tydligt
         ax.annotate(
-            f"{r['run_id']}\n{acc:.0f}%",
+            f"{run_id}\n{acc:.1f}%",
             xy=(tokens, acc),
-            xytext=(8, 4),
+            xytext=(10, 2),
             textcoords="offset points",
-            fontsize=8,
+            fontsize=9,
+            fontweight="bold",
             color=style["color"],
+            zorder=5
         )
-        
-        # Spara raden för att synkronisera med textutskriften nedan
-        plotted_rows.append(r)
 
     ax.set_xlabel("Genomsnittligt antal tokens per fråga (Compute)", fontsize=11)
     ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
     ax.set_title("H2: Test-Time Compute — Agent vs. Tränad Bas vs. 7B Baseline",
                  fontsize=12, fontweight="bold")
-    ax.grid(True, linestyle="--", alpha=0.5)
-    ax.legend(loc="lower right", frameon=True)
+    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="#eaeded")
 
     plt.tight_layout()
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
 
-    # --- Summaryprint (Visar nu exakt samma rader som plottats) ---
+    # --- Summaryprint (Visar endast fokusmodellerna i tabellen för renhet) ---
     print("\n" + "=" * 60)
-    print(f"  {'Modell':<25} {'Acc':>6} {'Tokens/q':>10} {'Tok/correct':>13}")
+    print(f"  {'Fokusmodell (Förgrund)':<25} {'Acc':>6} {'Tokens/q':>10} {'Tok/correct':>13}")
     print("-" * 60)
-    if plotted_rows:
-        summary_df = pd.DataFrame(plotted_rows)
+    if foreground_rows:
+        just_rows = [item[0] for item in foreground_rows]
+        summary_df = pd.DataFrame(just_rows)
         for _, r in summary_df.sort_values("accuracy", ascending=False).iterrows():
             run_id = str(r["run_id"])
             acc    = float(r["accuracy"])
