@@ -230,67 +230,60 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
 # =====================================================================
 def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     """
-    Jämför Agenten, den rena 3B 10% Baslinjen och SOTA Math-7B Baseline i förgrunden.
-    Alla andra (t.ex. grpo-träningssteg) blir skuggade gråa punkter i bakgrunden.
+    Plottar 3b_10pct, 3b_10pct_agent och math_7b_baseline i förgrunden med labels.
+    Alla andra modeller plottas som skuggade grå punkter utan labels.
     """
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Färg och stil för de tre fokusmodellerna (Förgrund)
     STYLE = {
-        "agent":    {"color": "#e67e22", "marker": "o", "s": 160, "label": "Agent Loop (3B 10% + PRM)"}, # Orange
-        "3b_10pct": {"color": "#2ecc71", "marker": "s", "s": 140, "label": "3B 10% Baseline (utan agent)"},# Grön
-        "math_7b":  {"color": "#9b59b6", "marker": "X", "s": 200, "label": "SOTA Baseline (Math-7B)"},  # Lila
+        "3b_10pct":       {"color": "#2ecc71", "marker": "s", "s": 140, "label": "3B 10% Baseline"},
+        "3b_10pct_agent": {"color": "#e67e22", "marker": "o", "s": 160, "label": "Agent Loop (3B 10% + PRM)"},
+        "math_7b":        {"color": "#9b59b6", "marker": "X", "s": 200, "label": "SOTA Baseline (Math-7B)"},
     }
 
-    labels_added = set()
+    FOREGROUND_IDS = {"3b_10pct", "3b_10pct_agent", "math_7b_baseline"}
+
     foreground_rows = []
     background_rows = []
 
-    # Max- och minvärden för att kunna räkna ut smart textplacering i efterhand
-    max_tokens = df["avg_tokens"].max() if "avg_tokens" in df.columns else 1000
-    max_acc = (df["accuracy"].max() * 100) if "accuracy" in df.columns else 100
-
-    # Förbättrad och strikt sorteringslogik
     for _, r in df.iterrows():
-        mode   = str(r.get("mode", "")).lower()
-        run_id = str(r["run_id"]).lower()
-
-        if "agent" in mode or "agent" in run_id:
-            foreground_rows.append((r, "agent"))
-        elif "math_baseline" in mode or "math_7b" in run_id or "math7b" in run_id:
-            foreground_rows.append((r, "math_7b"))
-        # Exakt matchning för den rena 3b_10pct baslinjen (får inte vara en aktiv grpo-träningskörning)
-        elif run_id == "3b_10pct" or run_id == "3b_10pct_baseline" or ( "3b_10pct" in run_id and "grpo" not in run_id and "epoch" not in run_id and "best" not in run_id ):
-            foreground_rows.append((r, "3b_10pct"))
+        run_id = str(r["run_id"]).lower().strip()
+        if run_id in FOREGROUND_IDS:
+            # Mappa run_id till style-nyckel
+            if run_id == "math_7b_baseline":
+                foreground_rows.append((r, "math_7b"))
+            else:
+                foreground_rows.append((r, run_id))
         else:
             background_rows.append(r)
 
-    # --- 1. Rita BAKGRUNDEN först (Skuggade modeller) ---
-    bg_label_added = False
+    # --- 1. Bakgrund (skuggade, utan label) ---
     for r in background_rows:
         acc    = float(r["accuracy"]) * 100
         tokens = float(r.get("avg_tokens", 0))
-        
         ax.scatter(tokens, acc,
-                   label="Övriga modeller (Bakgrund)" if not bg_label_added else "_nolegend_",
-                   color="#bdc3c7", # Ljusgrå
+                   color="#bdc3c7",
                    marker="o",
                    s=50,
-                   alpha=0.3,       # Ökad transparens för bättre skuggning
+                   alpha=0.3,
                    edgecolors="none",
-                   zorder=2)        # Hamnar i bakgrunden
-        bg_label_added = True
+                   zorder=2)
 
-    # --- 2. Rita FÖRGRUNDEN (De tre fokusmodellerna) ---
+    # --- 2. Förgrund (fokusmodeller med labels) ---
+    labels_added = set()
+
+    # Samla förgrundspunkter för kollisionsdetektering
+    fg_points = []
     for r, key in foreground_rows:
         acc    = float(r["accuracy"]) * 100
         tokens = float(r.get("avg_tokens", 0))
-        run_id = str(r["run_id"])
+        fg_points.append((tokens, acc, key, str(r["run_id"])))
 
+    # Rita scatter-punkterna
+    for tokens, acc, key, run_id in fg_points:
         style = STYLE[key]
         label = style["label"] if key not in labels_added else "_nolegend_"
         labels_added.add(key)
-
         ax.scatter(tokens, acc,
                    label=label,
                    color=style["color"],
@@ -298,35 +291,101 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
                    s=style["s"],
                    edgecolors="black",
                    linewidths=1.2,
-                   zorder=4)        # Hamnar framför allt annat
+                   zorder=4)
 
-        # --- Smart, dynamisk textplacering för att undvika krockar med ramen ---
-        # Standardförskjutning (höger och lite upp)
-        x_offset = 12
-        y_offset = 2
-        ha_align = "left"
-        va_align = "bottom"
+    # Hämta axelgränser EFTER att alla punkter ritats (matplotlib justerar dem automatiskt)
+    ax.autoscale_view()
+    x_min, x_max = ax.get_xlim()
+    y_min, y_max = ax.get_ylim()
+    x_range = x_max - x_min
+    y_range = y_max - y_min
 
-        # Om punkten ligger väldigt nära högerkanten, flytta texten till vänster om punkten
-        if tokens > max_tokens * 0.82:
-            x_offset = -12
-            ha_align = "right"
-            
-        # Om punkten ligger väldigt högt upp, skjut ner texten något
-        if acc > max_acc * 0.92:
-            y_offset = -12
-            va_align = "top"
+    # Annotationer med smart kollisions- och kantdetektering
+    placed_boxes = []  # [(x0, y0, x1, y1)] i datakoordinater
+
+    def overlaps(bx0, by0, bx1, by1):
+        """Kontrollerar om en ny box krockar med redan placerade boxar."""
+        for (ox0, oy0, ox1, oy1) in placed_boxes:
+            if bx0 < ox1 and bx1 > ox0 and by0 < oy1 and by1 > oy0:
+                return True
+        return False
+
+    # Kandidatförskjutningar att prova i ordning (höger, vänster, upp, ner, diagonaler)
+    OFFSETS = [
+        ( 12,  6, "left",  "bottom"),
+        (-12,  6, "right", "bottom"),
+        ( 12, -6, "left",  "top"),
+        (-12, -6, "right", "top"),
+        (  0, 14, "center","bottom"),
+        (  0,-14, "center","top"),
+        ( 18,  0, "left",  "center"),
+        (-18,  0, "right", "center"),
+    ]
+
+    # Uppskattad textstorlek i datakoordinater (justeras efter figurens storlek)
+    fig_w, fig_h = fig.get_size_inches()
+    char_w_data = x_range / (fig_w * 8.5)   # ~8.5 tecken per tum vid fontsize 9
+    line_h_data = y_range / (fig_h * 6.5)   # ~6.5 rader per tum vid fontsize 9
+
+    for tokens, acc, key, run_id in fg_points:
+        style  = STYLE[key]
+        text   = f"{run_id}\n{acc:.1f}%"
+        lines  = text.split("\n")
+        tw     = max(len(l) for l in lines) * char_w_data
+        th     = len(lines) * line_h_data
+
+        chosen_xoff, chosen_yoff, chosen_ha, chosen_va = OFFSETS[0]  # fallback
+
+        for xoff_pt, yoff_pt, ha, va in OFFSETS:
+            # Konvertera offset från punkter till datakoordinater
+            xoff_data = xoff_pt / 72 * (x_range / fig_w)
+            yoff_data = yoff_pt / 72 * (y_range / fig_h)
+
+            # Ankarpunkt för textboxen beroende på ha/va
+            if ha == "left":
+                bx0 = tokens + xoff_data
+                bx1 = bx0 + tw
+            elif ha == "right":
+                bx1 = tokens + xoff_data
+                bx0 = bx1 - tw
+            else:  # center
+                bx0 = tokens + xoff_data - tw / 2
+                bx1 = tokens + xoff_data + tw / 2
+
+            if va == "bottom":
+                by0 = acc + yoff_data
+                by1 = by0 + th
+            elif va == "top":
+                by1 = acc + yoff_data
+                by0 = by1 - th
+            else:  # center
+                by0 = acc + yoff_data - th / 2
+                by1 = acc + yoff_data + th / 2
+
+            # Kontrollera att boxen är inom axelgränserna (med lite marginal)
+            margin_x = x_range * 0.01
+            margin_y = y_range * 0.01
+            in_bounds = (bx0 >= x_min + margin_x and bx1 <= x_max - margin_x and
+                         by0 >= y_min + margin_y and by1 <= y_max - margin_y)
+
+            if in_bounds and not overlaps(bx0, by0, bx1, by1):
+                chosen_xoff, chosen_yoff, chosen_ha, chosen_va = xoff_pt, yoff_pt, ha, va
+                placed_boxes.append((bx0, by0, bx1, by1))
+                break
+        else:
+            # Ingen perfekt plats hittades — använd fallback och registrera ändå
+            placed_boxes.append((bx0, by0, bx1, by1))
 
         ax.annotate(
-            f"{run_id}\n{acc:.1f}%",
+            text,
             xy=(tokens, acc),
-            xytext=(x_offset, y_offset),
+            xytext=(chosen_xoff, chosen_yoff),
             textcoords="offset points",
             fontsize=9,
             fontweight="bold",
             color=style["color"],
-            horizontalalignment=ha_align,
-            verticalalignment=va_align,
+            horizontalalignment=chosen_ha,
+            verticalalignment=chosen_va,
             zorder=5
         )
 
@@ -334,10 +393,8 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
     ax.set_title("H2: Test-Time Compute — Agent vs. Tränad Bas vs. 7B Baseline",
                  fontsize=12, fontweight="bold")
-    
-    # Rättat: margins() istället för set_margins()
-    ax.margins(0.12)
-    
+
+    ax.set_margins(0.15)
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="#eaeded")
 
@@ -346,13 +403,12 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
 
-    # --- Summaryprint (Visar endast fokusmodellerna i tabellen för renhet) ---
+    # --- Summary ---
     print("\n" + "=" * 60)
     print(f"  {'Fokusmodell (Förgrund)':<25} {'Acc':>6} {'Tokens/q':>10} {'Tok/correct':>13}")
     print("-" * 60)
     if foreground_rows:
-        just_rows = [item[0] for item in foreground_rows]
-        summary_df = pd.DataFrame(just_rows)
+        summary_df = pd.DataFrame([item[0] for item in foreground_rows])
         for _, r in summary_df.sort_values("accuracy", ascending=False).iterrows():
             run_id = str(r["run_id"])
             acc    = float(r["accuracy"])
