@@ -13,74 +13,120 @@ import matplotlib.pyplot as plt
 # =====================================================================
 def plot_grpo_training(drive_dir: str, save_path: str = None):
     """
-    Läser metrics.json-filer och ritar upp Reward och Validerings-Accuracy.
+    Läser in JSON-filer direkt från drive_dir och ritar upp ett 2x2 rutnät.
+    Normaliserar X-axeln till globala träningssteg för att hantera att epoker är olika långa.
     """
+    # Vi testar både 5pct och 4pct utifall Python avrundade fel under träningen
     EXPECTED_RUNS = [
-        ("1_5b", 2), ("1_5b", 5), ("1_5b", 10),
-        ("3b", 2), ("3b", 5), ("3b", 10)
+        ("1_5b", 2), ("1_5b", 5), ("1_5b", 4), ("1_5b", 10),
+        ("3b", 2), ("3b", 5), ("3b", 4), ("3b", 10)
     ]
-    PCT_COLOR = {2: "#e74c3c", 5: "#3498db", 10: "#2ecc71"}
-    PCT_LABEL = {2: "2.5% Data", 5: "5% Data", 10: "10% Data"}
-    SIZE_DISPLAY = {"1_5b": "Qwen2.5-Math-1.5B", "3b": "Qwen2.5-Math-3B"}
+    
+    # Standardisera färger och labels så att 4pct och 5pct mappas till samma "5% Data"
+    PCT_COLOR = {2: "#e74c3c", 5: "#3498db", 4: "#3498db", 10: "#2ecc71"}
+    PCT_LABEL = {2: "2.5% Data", 5: "5% Data", 4: "5% Data (4pct)", 10: "10% Data"}
+    SIZE_DISPLAY = {"1_5b": "Qwen2.5-Math-1.5B (GRPO)", "3b": "Qwen2.5-Math-3B (GRPO)"}
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
     plot_mapping = {
         "1_5b": {"reward": axes[0, 0], "acc": axes[0, 1]},
         "3b":   {"reward": axes[1, 0], "acc": axes[1, 1]}
     }
 
+    print("Checking for metrics files in:", drive_dir)
     file_found = False
+    
     for size, pct in EXPECTED_RUNS:
         filename = f"grpo_{size}_{pct}pct_metrics.json"
         full_path = os.path.join(drive_dir, filename)
+        
         if not os.path.exists(full_path):
+            print(f"  [X] Saknas: {filename}")
             continue
             
+        print(f"  [✓] Hittad: {filename} -> Laddar och normaliserar...")
         file_found = True
+        
         with open(full_path, "r") as f:
             metrics = json.load(f)
             
         ax_reward = plot_mapping[size]["reward"]
         ax_acc = plot_mapping[size]["acc"]
         
-        # Reward per steg
         log_history = metrics.get("log_history", [])
+        
+        # 1. Hämta Reward per träningssteg
         reward_steps = [e["step"] for e in log_history if "reward" in e]
         rewards = [e["reward"] for e in log_history if "reward" in e]
+        
         if reward_steps:
-            ax_reward.plot(reward_steps, rewards, "-", color=PCT_COLOR[pct], linewidth=1.5, label=PCT_LABEL[pct])
+            ax_reward.plot(reward_steps, rewards, "-", color=PCT_COLOR[pct], 
+                           linewidth=1.5, label=PCT_LABEL[pct])
             
-        # Accuracy per epok
+        # 2. NORMALISERING: Mappa validerings-accuracy mot det FAKTISKA träningssteget
+        # Istället för att använda stela epoker (1,2,3) kollar vi vilket 'step' modellen var på
         acc_hist = metrics.get("val_accuracy_history", [])
-        if acc_hist:
-            epochs = [h["epoch"] for h in acc_hist]
-            accs = [h["val_accuracy"] * 100 for h in acc_hist]
-            ax_acc.plot(epochs, accs, "-o", color=PCT_COLOR[pct], markersize=6, linewidth=2, label=PCT_LABEL[pct])
+        if acc_acc_hist := metrics.get("val_accuracy_history", []):
+            epochs = [h["epoch"] for h in acc_acc_hist]
+            accs = [h["val_accuracy"] * 100 for h in acc_acc_hist]
+            
+            # Försök översätta epok till exakt träningssteg genom att titta i log_history
+            normalized_steps = []
+            for ep in epochs:
+                # Hitta det träningssteg som ligger närmast denna epok i historiken
+                closest_step = None
+                min_diff = float("inf")
+                for e in log_history:
+                    if "epoch" in e:
+                        diff = abs(e["epoch"] - ep)
+                        if diff < min_diff:
+                            min_diff = diff
+                            closest_step = e["step"]
+                
+                # Om vi inte hittar ett matchande steg i loggarna (t.ex. om man loggar sällan),
+                # räknar vi ut det linjärt baserat på max antal steg och max epoker.
+                if closest_step is None and reward_steps:
+                    max_step = max(reward_steps)
+                    max_epoch = max(epochs) if epochs else 1
+                    closest_step = int((ep / max_epoch) * max_step)
+                
+                normalized_steps.append(closest_step if closest_step is not None else ep)
+
+            # Plotta med det normaliserade träningssteget på X-axeln!
+            ax_acc.plot(normalized_steps, accs, "-o", color=PCT_COLOR[pct], 
+                        markersize=6, linewidth=2, label=PCT_LABEL[pct])
 
     if not file_found:
-        print(f"[ERROR] Inga träningsfiler hittades i {drive_dir}")
+        print(f"\n[FEL] Inga metrics-filer hittades överhuvudtaget i mappen: {drive_dir}")
         plt.close()
         return
 
+    # Justera design och axlar
     for size in ["1_5b", "3b"]:
-        plot_mapping[size]["reward"].set_title(f"{SIZE_DISPLAY[size]} — Mean Reward per Step", fontsize=11, fontweight="bold")
-        plot_mapping[size]["reward"].set_xlabel("Training Step")
-        plot_mapping[size]["reward"].set_ylabel("Reward Score")
-        plot_mapping[size]["reward"].legend(loc="lower right")
-        plot_mapping[size]["reward"].grid(True, linestyle="--", alpha=0.5)
+        ax_reward = plot_mapping[size]["reward"]
+        ax_acc = plot_mapping[size]["acc"]
         
-        plot_mapping[size]["acc"].set_title(f"{SIZE_DISPLAY[size]} — Val Accuracy per Epoch", fontsize=11, fontweight="bold")
-        plot_mapping[size]["acc"].set_xlabel("Epoch")
-        plot_mapping[size]["acc"].set_ylabel("Accuracy (%)")
-        plot_mapping[size]["acc"].legend(loc="lower right")
-        plot_mapping[size]["acc"].grid(True, linestyle="--", alpha=0.5)
+        ax_reward.set_title(f"{SIZE_DISPLAY[size]} — Mean Reward", fontsize=11, fontweight="bold")
+        ax_reward.set_xlabel("Träningssteg (Steps)")
+        ax_reward.set_ylabel("Reward Score")
+        ax_reward.legend(loc="lower right")
+        ax_reward.grid(True, linestyle="--", alpha=0.5)
+        
+        ax_acc.set_title(f"{SIZE_DISPLAY[size]} — Normaliserad Validerings-Accuracy", fontsize=11, fontweight="bold")
+        ax_acc.set_xlabel("Träningssteg (Steps — Normaliserad)")
+        ax_acc.set_ylabel("Accuracy (%)")
+        ax_acc.legend(loc="lower right")
+        ax_acc.grid(True, linestyle="--", alpha=0.5)
 
-    plt.suptitle("GRPO Alignment Performance (Model Scale vs. Data Efficiency)", fontsize=14, fontweight="bold", y=0.99)
+    plt.suptitle("GRPO Alignment Prestanda (Normaliserad Compute-axel)", fontsize=14, fontweight="bold", y=0.99)
     plt.tight_layout()
+    
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"\n[INFO] Graf sparad till: {save_path}")
+        
     plt.show()
-
 
 # =====================================================================
 # 2. GRAF: SKALNINGSLAGAR & DATAEFFEKTIVITET (Hypotes 1)
