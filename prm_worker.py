@@ -77,7 +77,15 @@ def main():
             sys.exit(1)
 
         with torch.no_grad():
-            outputs = model(**inputs, use_cache=False)
+            outputs = model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                use_cache=False,
+                past_key_values=None,
+                output_attentions=False,
+                output_hidden_states=False,
+                return_dict=True,
+            )
 
         # FIX: logits har nu rätt shape [1, seq_len, 2] — indexera med mask på dim 1
         logits = outputs.logits          # [1, seq_len, 2]
