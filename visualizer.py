@@ -267,7 +267,7 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
         tokens  = float(r.get("avg_tokens", 0))
         ax.scatter(tokens, acc,
                    color="#bdc3c7", marker="o", s=50,
-                   alpha=0.3, edgecolors="none", zorder=2)
+                   alpha=0.7, edgecolors="none", zorder=2)
 
     # --- 2. Förgrund: samla punkter ---
     fg_points = []
