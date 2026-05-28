@@ -393,6 +393,80 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
             zorder=5
         )
 
+
+    for r in background_rows:
+        raw_acc = float(r["accuracy"])
+        acc     = raw_acc * 100 if raw_acc <= 1.0 else raw_acc
+        tokens  = float(r.get("avg_tokens", 0))
+        run_id  = str(r["run_id"])
+
+        text  = f"{run_id}\n{acc:.1f}%"
+        lines = text.split("\n")
+        tw    = max(len(l) for l in lines) * char_w_data
+        th    = len(lines) * line_h_data
+
+        chosen = None
+        for xoff_pt, yoff_pt, ha, va in OFFSETS:
+            xoff_data = xoff_pt / 72 * (x_range / fig_w)
+            yoff_data = yoff_pt / 72 * (y_range / fig_h)
+
+            if ha == "left":
+                bx0, bx1 = tokens + xoff_data, tokens + xoff_data + tw
+            elif ha == "right":
+                bx1 = tokens + xoff_data
+                bx0 = bx1 - tw
+            else:
+                bx0 = tokens + xoff_data - tw / 2
+                bx1 = tokens + xoff_data + tw / 2
+
+            if va == "bottom":
+                by0, by1 = acc + yoff_data, acc + yoff_data + th
+            elif va == "top":
+                by1, by0 = acc + yoff_data, acc + yoff_data - th
+            else:
+                by0 = acc + yoff_data - th / 2
+                by1 = acc + yoff_data + th / 2
+
+            margin_x = x_range * 0.01
+            margin_y = y_range * 0.01
+            in_bounds = (bx0 >= x_min + margin_x and bx1 <= x_max - margin_x and
+                        by0 >= y_min + margin_y and by1 <= y_max - margin_y)
+
+            if in_bounds and not overlaps(bx0, by0, bx1, by1):
+                chosen = (xoff_pt, yoff_pt, ha, va, bx0, by0, bx1, by1)
+                break
+
+        if chosen is None:
+            # Hoppa över — ingen plats hittades, bättre än att stapla labels
+            continue
+
+        xoff_pt, yoff_pt, ha, va, bx0, by0, bx1, by1 = chosen
+        placed_boxes.append((bx0, by0, bx1, by1))
+
+        ax.annotate(
+            text,
+            xy=(tokens, acc),
+            xytext=(xoff_pt, yoff_pt),
+            textcoords="offset points",
+            fontsize=7,                      # mindre än förgrundslabels (9pt)
+            fontweight="normal",             # inte bold
+            color="#888888",                 # grå, matchar punkterna
+            horizontalalignment=ha,
+            verticalalignment=va,
+            zorder=3,                        # under förgrundslabels (5) men över bakgrund (2)
+            arrowprops=dict(
+                arrowstyle="-",              # enkel linje, ingen pil
+                color="#bbbbbb",
+                lw=0.6,
+            ),
+            bbox=dict(
+                boxstyle="round,pad=0.2",
+                facecolor="white",
+                edgecolor="none",
+                alpha=0.6,
+            )
+        )    
+
     ax.set_xlabel("Genomsnittligt antal tokens per fråga (Compute)", fontsize=11)
     ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
     ax.set_title("H2: Test-Time Compute — Agent vs. Tränad Bas vs. 7B Baseline",
