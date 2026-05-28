@@ -17,7 +17,6 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
     för att ge en vetenskapligt korrekt jämförelse av dataeffektivitet.
     Söker både i rotkatalogen och i undermappar (t.ex. grpo_1_5b_5pct_best).
     """
-    # FIX: Tog bort duplikaten (4) — bara 2, 5, 10 är verkliga körningar
     EXPECTED_RUNS = [
         ("1_5b", 2), ("1_5b", 5), ("1_5b", 10),
         ("3b",   2), ("3b",   5), ("3b",  10)
@@ -26,8 +25,6 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
     PCT_COLOR = {2: "#e74c3c", 5: "#3498db", 10: "#2ecc71"}
     PCT_LABEL = {2: "2.5% Data", 5: "5% Data", 10: "10% Data"}
     SIZE_DISPLAY = {"1_5b": "Qwen2.5-Math-1.5B (GRPO)", "3b": "Qwen2.5-Math-3B (GRPO)"}
-
-    BATCH_SAMPLES_PER_STEP = 16
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     plot_mapping = {
@@ -89,55 +86,32 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
         if not isinstance(log_history, list):
             log_history = []
 
-        # --- 1. Normalisera Reward-kurvan ---
-        reward_steps = []
+        # --- 1. Reward-kurvan (x = epoch) ---
+        reward_epochs = []
         rewards = []
         for e in log_history:
-            step = e.get("step")
+            ep  = e.get("epoch")
             r_val = e.get("reward", e.get("train/reward", e.get("rewards/chosen", None)))
-            if step is not None and r_val is not None:
-                reward_steps.append(step)
+            if ep is not None and r_val is not None:
+                reward_epochs.append(ep)
                 rewards.append(r_val)
 
-        if reward_steps:
-            samples_seen_reward = [step * BATCH_SAMPLES_PER_STEP for step in reward_steps]
-            ax_reward.plot(samples_seen_reward, rewards, "-", color=PCT_COLOR[pct],
+        if reward_epochs:
+            ax_reward.plot(reward_epochs, rewards, "-", color=PCT_COLOR[pct],
                            linewidth=1.5, label=PCT_LABEL[pct])
 
-        # --- 2. Normalisera Validerings-Accuracy ---
+        # --- 2. Validerings-Accuracy (x = epoch) ---
         acc_hist = metrics.get("val_accuracy_history", []) if isinstance(metrics, dict) else []
         if not acc_hist:
             for e in log_history:
                 if "eval_accuracy" in e or "val_accuracy" in e:
-                    acc_val = e.get("eval_accuracy", e.get("val_accuracy"))
-                    step_val = e.get("step", 0)
-                    acc_hist.append({"epoch": step_val / 100, "val_accuracy": acc_val})
+                    acc_val  = e.get("eval_accuracy", e.get("val_accuracy"))
+                    acc_hist.append({"epoch": e.get("epoch", 0), "val_accuracy": acc_val})
 
         if acc_hist:
             epochs = [h["epoch"] for h in acc_hist]
-            accs = [h["val_accuracy"] * (100 if h["val_accuracy"] <= 1.0 else 1) for h in acc_hist]
-
-            samples_seen_acc = []
-            for ep in epochs:
-                closest_step = None
-                min_diff = float("inf")
-                for e in log_history:
-                    if "epoch" in e:
-                        diff = abs(e["epoch"] - ep)
-                        if diff < min_diff:
-                            min_diff = diff
-                            closest_step = e["step"]
-
-                if closest_step is None and reward_steps:
-                    max_step = max(reward_steps)
-                    max_epoch = max(epochs) if epochs else 1
-                    closest_step = int((ep / max_epoch) * max_step)
-
-                # FIX: Använd 0 som sista fallback istället för ep (epoch-float ger nonsens-samples)
-                step_val = closest_step if closest_step is not None else 0
-                samples_seen_acc.append(step_val * BATCH_SAMPLES_PER_STEP)
-
-            ax_acc.plot(samples_seen_acc, accs, "-o", color=PCT_COLOR[pct],
+            accs   = [h["val_accuracy"] * (100 if h["val_accuracy"] <= 1.0 else 1) for h in acc_hist]
+            ax_acc.plot(epochs, accs, "-o", color=PCT_COLOR[pct],
                         markersize=6, linewidth=2, label=PCT_LABEL[pct])
 
     if not file_found:
@@ -156,7 +130,7 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
                 ax.set_title(f"{SIZE_DISPLAY[size]} — Validation Accuracy", fontsize=11, fontweight="bold")
                 ax.set_ylabel("Accuracy (%)")
 
-            ax.set_xlabel("Exponeringar (Samples Seen)")
+            ax.set_xlabel("Epoch")
             ax.grid(True, linestyle="--", alpha=0.5)
 
             handles, labels = ax.get_legend_handles_labels()
@@ -164,7 +138,7 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
             if by_label:
                 ax.legend(by_label.values(), by_label.keys(), loc="lower right")
 
-    plt.suptitle("GRPO Alignment Performance (Sample-Efficient Compute Axis)", fontsize=14, fontweight="bold", y=0.99)
+    plt.suptitle("GRPO Alignment Performance", fontsize=14, fontweight="bold", y=0.99)
     plt.tight_layout()
 
     if save_path:
@@ -189,7 +163,9 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
         mode = str(r.get("mode", "")).lower()
 
         # Exkludera agent-körningar och den externa math-7b baslinjen
-        if "agent" in mode or "agent" in run_id or "7b" in run_id:
+        # OBS: kolla på "no_agent" explicit så den inte filtreras av "agent" in mode
+        is_agent = (mode == "agent") or (run_id.endswith("_agent"))
+        if is_agent or "7b" in run_id:
             continue
 
         # Identifiera modellstorlek robust
@@ -265,7 +241,6 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
         "agent":    {"color": "#2ecc71", "marker": "o", "s": 150, "label": "Agent Loop (3B 10% + PRM)"},
         "math_7b":  {"color": "#9b59b6", "marker": "X", "s": 180, "label": "SOTA Baseline (Math-7B)"},
         "3b_10pct": {"color": "#3498db", "marker": "s", "s": 130, "label": "3B 10% (ingen agent)"},
-        "other":    {"color": "gray",    "marker": ".", "s": 80,  "label": None},
     }
 
     labels_added = set()
@@ -276,15 +251,13 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
         acc    = float(r["accuracy"]) * 100
         tokens = float(r.get("avg_tokens", 0))
 
-        # Kategorisera raden
+        # Kategorisera raden — skippa allt utom de tre huvudkategorierna
         if "agent" in mode or "agent" in run_id:
             key = "agent"
         elif "math_baseline" in mode or "math_7b" in run_id:
             key = "math_7b"
         elif "3b_10pct" in run_id and "agent" not in mode:
             key = "3b_10pct"
-        elif "1_5b" in run_id or ("3b" in run_id and "agent" not in mode):
-            key = "other"
         else:
             continue
 
@@ -297,20 +270,18 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
                    color=style["color"],
                    marker=style["marker"],
                    s=style["s"],
-                   edgecolors="black" if key != "other" else "none",
-                   alpha=0.4 if key == "other" else 1.0,
-                   zorder=3 if key != "other" else 2)
+                   edgecolors="black",
+                   zorder=3)
 
-        # Namnge de viktigaste punkterna
-        if key in ("agent", "math_7b", "3b_10pct"):
-            ax.annotate(
-                f"{run_id}\n{acc:.0f}%",
-                xy=(tokens, acc),
-                xytext=(8, 4),
-                textcoords="offset points",
-                fontsize=8,
-                color=style["color"],
-            )
+        # Annotera alla tre punkterna
+        ax.annotate(
+            f"{run_id}\n{acc:.0f}%",
+            xy=(tokens, acc),
+            xytext=(8, 4),
+            textcoords="offset points",
+            fontsize=8,
+            color=style["color"],
+        )
 
     ax.set_xlabel("Genomsnittligt antal tokens per fråga (Compute)", fontsize=11)
     ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
