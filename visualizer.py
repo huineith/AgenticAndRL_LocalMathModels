@@ -17,16 +17,17 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
     för att ge en vetenskapligt korrekt jämförelse av dataeffektivitet.
     Söker både i rotkatalogen och i undermappar (t.ex. grpo_1_5b_5pct_best).
     """
+    # FIX: Tog bort duplikaten (4) — bara 2, 5, 10 är verkliga körningar
     EXPECTED_RUNS = [
-        ("1_5b", 2), ("1_5b", 4), ("1_5b", 5), ("1_5b", 10),
-        ("3b", 2), ("3b", 4), ("3b", 5), ("3b", 10)
+        ("1_5b", 2), ("1_5b", 5), ("1_5b", 10),
+        ("3b",   2), ("3b",   5), ("3b",  10)
     ]
-    
-    PCT_COLOR = {2: "#e74c3c", 4: "#3498db", 5: "#3498db", 10: "#2ecc71"}
-    PCT_LABEL = {2: "2.5% Data", 4: "5% Data", 5: "5% Data", 10: "10% Data"}
+
+    PCT_COLOR = {2: "#e74c3c", 5: "#3498db", 10: "#2ecc71"}
+    PCT_LABEL = {2: "2.5% Data", 5: "5% Data", 10: "10% Data"}
     SIZE_DISPLAY = {"1_5b": "Qwen2.5-Math-1.5B (GRPO)", "3b": "Qwen2.5-Math-3B (GRPO)"}
 
-    BATCH_SAMPLES_PER_STEP = 16 
+    BATCH_SAMPLES_PER_STEP = 16
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     plot_mapping = {
@@ -36,83 +37,86 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
 
     print("Söker efter träningsfiler i:", drive_dir)
     file_found = False
-    
+
     for size, pct in EXPECTED_RUNS:
         # 1. Kolla standardfilen i roten först
         root_filename = f"grpo_{size}_{pct}pct_metrics.json"
-        full_path = os.path.join(drive_dir, root_filename)
-        
-        # 2. Om den inte finns, leta i undermapparna som du listade
-        if not os.path.exists(full_path):
-            # Prioriterade mappar att leta i
+        root_path = os.path.join(drive_dir, root_filename)
+        found_path = None
+
+        if os.path.exists(root_path):
+            found_path = root_path
+        else:
+            # FIX: Lade till _warmup och _grpo_tmp som saknades, plus renare logik med found_path
             subdirs_to_check = [
                 f"grpo_{size}_{pct}pct_best",
                 f"grpo_{size}_{pct}pct_epoch2",
-                f"grpo_{size}_{pct}pct_epoch1"
+                f"grpo_{size}_{pct}pct_epoch1",
+                f"grpo_{size}_{pct}pct_warmup",
+                f"grpo_{size}_{pct}pct_grpo_tmp",
             ]
             for subdir in subdirs_to_check:
                 subdir_path = os.path.join(drive_dir, subdir)
                 if os.path.exists(subdir_path):
-                    # Hugging Face sparar oftast historiken i 'trainer_state.json'
                     for possible_json in ["trainer_state.json", "metrics.json"]:
                         check_file = os.path.join(subdir_path, possible_json)
                         if os.path.exists(check_file):
-                            full_path = check_file
+                            found_path = check_file
                             break
-                if full_path != os.path.join(drive_dir, root_filename): # Hittade en match
+                if found_path:
                     break
 
-        # Om vi fortfarande inte hittade något, hoppa över
-        if not os.path.exists(full_path):
+        if not found_path:
             print(f"  [X] Saknas: grpo_{size}_{pct}pct (Hittade ingen json i roten eller undermappar)")
             continue
-            
-        print(f"  [✓] Hittad data: {os.path.basename(os.path.dirname(full_path)) or 'Roten'}/{os.path.basename(full_path)}")
+
+        print(f"  [✓] Hittad data: {os.path.basename(os.path.dirname(found_path)) or 'Roten'}/{os.path.basename(found_path)}")
         file_found = True
-        
-        with open(full_path, "r") as f:
+
+        with open(found_path, "r") as f:
             metrics = json.load(f)
-            
+
         ax_reward = plot_mapping[size]["reward"]
         ax_acc = plot_mapping[size]["acc"]
-        
-        # Säkra upp ifall det är en Hugging Face 'trainer_state.json' (som använder log_history direkt i roten)
-        log_history = metrics.get("log_history", metrics) if isinstance(metrics, dict) else metrics
-        if not isinstance(log_history, list) and isinstance(metrics, dict):
+
+        # FIX: Renare log_history-extraktion som inte riskerar att returnera hela metrics-dicten
+        if isinstance(metrics, dict):
             log_history = metrics.get("log_history", [])
+        elif isinstance(metrics, list):
+            log_history = metrics
+        else:
+            log_history = []
+        if not isinstance(log_history, list):
+            log_history = []
 
         # --- 1. Normalisera Reward-kurvan ---
-        # Olika tränare loggar under olika nycklar (t.ex. 'reward', 'train/reward' eller 'rewards/chosen')
         reward_steps = []
         rewards = []
         for e in log_history:
             step = e.get("step")
-            # Leta efter belöningsnycklar robust
             r_val = e.get("reward", e.get("train/reward", e.get("rewards/chosen", None)))
             if step is not None and r_val is not None:
                 reward_steps.append(step)
                 rewards.append(r_val)
-        
+
         if reward_steps:
             samples_seen_reward = [step * BATCH_SAMPLES_PER_STEP for step in reward_steps]
-            ax_reward.plot(samples_seen_reward, rewards, "-", color=PCT_COLOR[pct], 
+            ax_reward.plot(samples_seen_reward, rewards, "-", color=PCT_COLOR[pct],
                            linewidth=1.5, label=PCT_LABEL[pct])
-            
+
         # --- 2. Normalisera Validerings-Accuracy ---
-        # Hämtar antingen din anpassade historik eller kollar i standard log_history
-        acc_hist = metrics.get("val_accuracy_history", [])
+        acc_hist = metrics.get("val_accuracy_history", []) if isinstance(metrics, dict) else []
         if not acc_hist:
-            # Fallback: kolla om validering/evaluering loggats direkt i historiken
             for e in log_history:
                 if "eval_accuracy" in e or "val_accuracy" in e:
                     acc_val = e.get("eval_accuracy", e.get("val_accuracy"))
                     step_val = e.get("step", 0)
-                    acc_hist.append({"epoch": step_val / 100, "val_accuracy": acc_val}) # grov uppskattning av epok ifall det saknas
+                    acc_hist.append({"epoch": step_val / 100, "val_accuracy": acc_val})
 
         if acc_hist:
             epochs = [h["epoch"] for h in acc_hist]
             accs = [h["val_accuracy"] * (100 if h["val_accuracy"] <= 1.0 else 1) for h in acc_hist]
-            
+
             samples_seen_acc = []
             for ep in epochs:
                 closest_step = None
@@ -123,16 +127,17 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
                         if diff < min_diff:
                             min_diff = diff
                             closest_step = e["step"]
-                
+
                 if closest_step is None and reward_steps:
                     max_step = max(reward_steps)
                     max_epoch = max(epochs) if epochs else 1
                     closest_step = int((ep / max_epoch) * max_step)
-                
-                step_val = closest_step if closest_step is not None else ep
+
+                # FIX: Använd 0 som sista fallback istället för ep (epoch-float ger nonsens-samples)
+                step_val = closest_step if closest_step is not None else 0
                 samples_seen_acc.append(step_val * BATCH_SAMPLES_PER_STEP)
 
-            ax_acc.plot(samples_seen_acc, accs, "-o", color=PCT_COLOR[pct], 
+            ax_acc.plot(samples_seen_acc, accs, "-o", color=PCT_COLOR[pct],
                         markersize=6, linewidth=2, label=PCT_LABEL[pct])
 
     if not file_found:
@@ -150,10 +155,10 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
             else:
                 ax.set_title(f"{SIZE_DISPLAY[size]} — Validation Accuracy", fontsize=11, fontweight="bold")
                 ax.set_ylabel("Accuracy (%)")
-                
+
             ax.set_xlabel("Exponeringar (Samples Seen)")
             ax.grid(True, linestyle="--", alpha=0.5)
-            
+
             handles, labels = ax.get_legend_handles_labels()
             by_label = dict(zip(labels, handles))
             if by_label:
@@ -161,11 +166,11 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
 
     plt.suptitle("GRPO Alignment Performance (Sample-Efficient Compute Axis)", fontsize=14, fontweight="bold", y=0.99)
     plt.tight_layout()
-    
+
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"\n[INFO] Träningsgraf sparad till: {save_path}")
-        
+
     plt.show()
 
 
@@ -178,15 +183,15 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
     Fungerar robust med ID-strukturer från benchmarker.py (t.ex. '1_5b_5pct').
     """
     plot_data = []
-    
+
     for _, r in df.iterrows():
         run_id = str(r["run_id"]).lower()
         mode = str(r.get("mode", "")).lower()
-        
+
         # Exkludera agent-körningar och den externa math-7b baslinjen
         if "agent" in mode or "agent" in run_id or "7b" in run_id:
             continue
-            
+
         # Identifiera modellstorlek robust
         if "1_5b" in run_id or "1.5b" in run_id:
             size = 1.5
@@ -194,19 +199,19 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
             size = 3.0
         else:
             continue
-            
-        # Identifiera dataprocent (X-axeln) utifrån benchmarker.py:s namngivning
+
+        # FIX: Tog bort "4pct" — det är en hallucination
         if "untrained" in run_id or "h0" in run_id or "0pct" in run_id:
             pct = 0.0
         elif "2pct" in run_id or "2.5" in run_id:
             pct = 2.5
-        elif "5pct" in run_id or "4pct" in run_id:
+        elif "5pct" in run_id:
             pct = 5.0
         elif "10pct" in run_id:
             pct = 10.0
         else:
             continue
-            
+
         plot_data.append({
             "Size": size,
             "Data_Pct": pct,
@@ -221,12 +226,12 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
     plot_df = pd.DataFrame(plot_data).sort_values("Data_Pct")
 
     plt.figure(figsize=(8, 5))
-    
+
     # Linje för 1.5B
     df_15 = plot_df[plot_df["Size"] == 1.5].drop_duplicates(subset=["Data_Pct"], keep="last")
     if not df_15.empty:
         plt.plot(df_15["Data_Pct"], df_15["Accuracy"], "-o", color="#e74c3c", linewidth=2.5, label="Qwen 1.5B + GRPO", markersize=8)
-    
+
     # Linje för 3B
     df_3 = plot_df[plot_df["Size"] == 3.0].drop_duplicates(subset=["Data_Pct"], keep="last")
     if not df_3.empty:
@@ -238,7 +243,7 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
     plt.xticks([0, 2.5, 5.0, 10.0], ["0% (Otränad)", "2.5%", "5.0%", "10.0%"])
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.legend(loc="lower right")
-    
+
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
@@ -253,6 +258,9 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
+    # FIX: Spårar vilka labels som redan lagts till för att undvika duplicering i legend
+    labels_added = set()
+
     for _, r in df.iterrows():
         mode = str(r.get("mode", "")).lower()
         run_id = str(r["run_id"]).lower()
@@ -260,11 +268,17 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
         tokens = r.get("avg_tokens", 0)
 
         if "agent" in mode or "agent" in run_id:
-            ax1.scatter(tokens, acc, label="Agent Loop (3B 10% + PRM)", color="#2ecc71", marker="o", s=150, edgecolors="black", zorder=3)
+            label = "Agent Loop (3B 10% + PRM)" if "agent_loop" not in labels_added else "_nolegend_"
+            labels_added.add("agent_loop")
+            ax1.scatter(tokens, acc, label=label, color="#2ecc71", marker="o", s=150, edgecolors="black", zorder=3)
         elif "math_baseline" in mode or "math_7b" in run_id:
-            ax1.scatter(tokens, acc, label="SOTA Baseline (Math-7B)", color="#9b59b6", marker="X", s=180, edgecolors="black", zorder=3)
+            label = "SOTA Baseline (Math-7B)" if "math_7b" not in labels_added else "_nolegend_"
+            labels_added.add("math_7b")
+            ax1.scatter(tokens, acc, label=label, color="#9b59b6", marker="X", s=180, edgecolors="black", zorder=3)
         elif "3b_10pct" in run_id and "agent" not in mode:
-            ax1.scatter(tokens, acc, label="Rå Tränad Bas (3B 10%)", color="#3498db", marker="s", s=130, edgecolors="black", zorder=3)
+            label = "Rå Tränad Bas (3B 10%)" if "3b_10pct" not in labels_added else "_nolegend_"
+            labels_added.add("3b_10pct")
+            ax1.scatter(tokens, acc, label=label, color="#3498db", marker="s", s=130, edgecolors="black", zorder=3)
         elif "1_5b" in run_id or "3b" in run_id:
             ax1.scatter(tokens, acc, color="gray", alpha=0.3, marker=".", s=80)
 
@@ -272,11 +286,7 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     ax1.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
     ax1.set_title("H2: Test-Time Compute (Agent vs. Rå vs. 7B Baseline)", fontsize=12, fontweight="bold")
     ax1.grid(True, linestyle="--", alpha=0.5)
-    
-    handles, labels = ax1.get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    if by_label:
-        ax1.legend(by_label.values(), by_label.keys(), loc="lower right", frameon=True)
+    ax1.legend(loc="lower right", frameon=True)
 
     # PRM Beslutsfördelning Panel 2
     agent_rows = df[df["mode"].str.lower().str.contains("agent", na=False)].to_dict(orient="records")
@@ -285,14 +295,14 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
 
     if agent_rows:
         colors = ["#2ecc71", "#f1c40f", "#e74c3c"]
-        x_positions = range(len(agent_rows))
+        # FIX: list() istället för range() för att undvika potentiell TypeError i matplotlib
+        x_positions = list(range(len(agent_rows)))
         bottoms = [0] * len(agent_rows)
 
-        # Letar efter antingen 'share_X' eller 'status_X_rate' från benchmarker.py-strukturen
         for idx, status in enumerate(["confident", "unsure", "failed"]):
             rate_key = f"status_{status}_rate"
             share_key = f"share_{status}"
-            
+
             heights = []
             for r in agent_rows:
                 rate = r.get(rate_key, r.get(share_key, 0.0))
