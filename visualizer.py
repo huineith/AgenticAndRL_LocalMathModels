@@ -323,3 +323,17 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
+
+    # --- Summaryprint ---
+    print("\n" + "=" * 60)
+    print(f"  {'Modell':<25} {'Acc':>6} {'Tokens/q':>10} {'Tok/correct':>13}")
+    print("-" * 60)
+    for _, r in df.sort_values("accuracy", ascending=False).iterrows():
+        run_id = str(r["run_id"])
+        acc    = float(r["accuracy"])
+        tokens = float(r.get("avg_tokens", 0))
+        # Tokens per correct answer = avg_tokens / accuracy
+        # (om acc=0.5 och tokens=300 → 600 tokens spenderas per rätt svar i snitt)
+        tok_per_correct = (tokens / acc) if acc > 0 else float("inf")
+        print(f"  {run_id:<25} {acc*100:>5.1f}%  {tokens:>9.0f}  {tok_per_correct:>12.0f}")
+    print("=" * 60)
