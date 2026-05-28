@@ -1,7 +1,7 @@
 """
 visualizer.py
 Gemensam modul för interaktiv visualisering i Jupyter Notebook.
-Helt befriad från CLI-kod. Normaliserad för 'Samples Seen' (Dataeffektivitet).
+Helt befriad från CLI-kod. Baserad på 'Epoch' för träningskurvor.
 """
 import os
 import json
@@ -9,12 +9,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # =====================================================================
-# 1. GRAF: GRPO TRÄNINGSKURVOR (Normaliserade på Samples Seen)
+# 1. GRAF: GRPO TRÄNINGSKURVOR (Baserat på Epoch)
 # =====================================================================
 def plot_grpo_training(drive_dir: str, save_path: str = None):
     """
-    Läser metrics/trainer_state-filer och normaliserar X-axeln till 'Samples Seen' 
-    för att ge en vetenskapligt korrekt jämförelse av dataeffektivitet.
+    Läser metrics/trainer_state-filer och visar X-axeln per 'Epoch'
+    för att ge en tydlig jämförelse av träningsförloppet.
     Söker både i rotkatalogen och i undermappar (t.ex. grpo_1_5b_5pct_best).
     """
     EXPECTED_RUNS = [
@@ -44,7 +44,6 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
         if os.path.exists(root_path):
             found_path = root_path
         else:
-            # FIX: Lade till _warmup och _grpo_tmp som saknades, plus renare logik med found_path
             subdirs_to_check = [
                 f"grpo_{size}_{pct}pct_best",
                 f"grpo_{size}_{pct}pct_epoch2",
@@ -76,7 +75,6 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
         ax_reward = plot_mapping[size]["reward"]
         ax_acc = plot_mapping[size]["acc"]
 
-        # FIX: Renare log_history-extraktion som inte riskerar att returnera hela metrics-dicten
         if isinstance(metrics, dict):
             log_history = metrics.get("log_history", [])
         elif isinstance(metrics, list):
@@ -119,7 +117,6 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
         plt.close()
         return
 
-    # Snygga till designen och rensa dubbletter i legends
     for size in ["1_5b", "3b"]:
         for ax_type in ["reward", "acc"]:
             ax = plot_mapping[size][ax_type]
@@ -149,12 +146,12 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
 
 
 # =====================================================================
-# 2. GRAF: SKALNINGSLAGAR & DATAEFFEKTIVITET (Hypotes 1 — SÄKRAD)
+# 2. GRAF: SKALNINGSLAGAR & DATAEFFEKTIVITET (Hypotes 1)
 # =====================================================================
 def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
     """
-    Ritar linjer från 0% (H0) till 10% data genom att mönstermatcha run_id.
-    Fungerar robust med ID-strukturer från benchmarker.py (t.ex. '1_5b_5pct').
+    Ritar linjer från No Training (0%) till 10% data genom att mönstermatcha run_id.
+    Visar snygga och korrekta procentsatser (No Training, 2.5%, 5%, 10%).
     """
     plot_data = []
 
@@ -163,8 +160,7 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
         mode = str(r.get("mode", "")).lower()
 
         # Exkludera agent-körningar och den externa math-7b baslinjen
-        # OBS: kolla på "no_agent" explicit så den inte filtreras av "agent" in mode
-        is_agent = (mode == "agent") or (run_id.endswith("_agent"))
+        is_agent = (mode == "agent") or (run_id.endswith("_agent")) or ("agent" in run_id)
         if is_agent or "7b" in run_id:
             continue
 
@@ -176,15 +172,15 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
         else:
             continue
 
-        # FIX: Tog bort "4pct" — det är en hallucination
-        if "untrained" in run_id or "h0" in run_id or "0pct" in run_id:
-            pct = 0.0
+        # OBS: Viktigt att matcha "10pct" FÖRE "0pct" eftersom "10pct" innehåller strängen "0pct"
+        if "10pct" in run_id or "10%" in run_id:
+            pct = 10.0
+        elif "5pct" in run_id or "5%" in run_id:
+            pct = 5.0
         elif "2pct" in run_id or "2.5" in run_id:
             pct = 2.5
-        elif "5pct" in run_id:
-            pct = 5.0
-        elif "10pct" in run_id:
-            pct = 10.0
+        elif "untrained" in run_id or "h0" in run_id or "0pct" in run_id or "no training" in run_id or "no_training" in run_id or "0%" in run_id:
+            pct = 0.0
         else:
             continue
 
@@ -201,24 +197,28 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
 
     plot_df = pd.DataFrame(plot_data).sort_values("Data_Pct")
 
-    plt.figure(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(8, 5))
 
     # Linje för 1.5B
     df_15 = plot_df[plot_df["Size"] == 1.5].drop_duplicates(subset=["Data_Pct"], keep="last")
     if not df_15.empty:
-        plt.plot(df_15["Data_Pct"], df_15["Accuracy"], "-o", color="#e74c3c", linewidth=2.5, label="Qwen 1.5B + GRPO", markersize=8)
+        ax.plot(df_15["Data_Pct"], df_15["Accuracy"], "-o", color="#e74c3c", linewidth=2.5, label="Qwen 1.5B + GRPO", markersize=8)
 
     # Linje för 3B
     df_3 = plot_df[plot_df["Size"] == 3.0].drop_duplicates(subset=["Data_Pct"], keep="last")
     if not df_3.empty:
-        plt.plot(df_3["Data_Pct"], df_3["Accuracy"], "-o", color="#3498db", linewidth=2.5, label="Qwen 3B + GRPO", markersize=8)
+        ax.plot(df_3["Data_Pct"], df_3["Accuracy"], "-o", color="#3498db", linewidth=2.5, label="Qwen 3B + GRPO", markersize=8)
 
-    plt.xlabel("Mängd GRPO-träningsdata (%)", fontsize=11)
-    plt.ylabel("GSM8K Accuracy (%)", fontsize=11)
-    plt.title("Hypotes 1: Skalningslagar & Dataeffektivitet under GRPO", fontsize=12, fontweight="bold")
-    plt.xticks([0, 2.5, 5.0, 10.0], ["0% (Otränad)", "2.5%", "5.0%", "10.0%"])
-    plt.grid(True, linestyle="--", alpha=0.5)
-    plt.legend(loc="lower right")
+    ax.set_xlabel("Mängd GRPO-träningsdata (%)", fontsize=11)
+    ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
+    ax.set_title("Hypotes 1: Skalningslagar & Dataeffektivitet under GRPO", fontsize=12, fontweight="bold")
+    
+    # Snygga till x-axeln enligt önskemål
+    ax.set_xticks([0, 2.5, 5.0, 10.0])
+    ax.set_xticklabels(["No Training", "2.5%", "5%", "10%"])
+    
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.legend(loc="lower right")
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
@@ -230,7 +230,7 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
 # =====================================================================
 def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     """
-    Jämför Agenten, alla tränade modeller (utan agent) och SOTA Math-7B Baseline.
+    Jämför enbart Agenten, 3B 10% Baseline (utan agent) och SOTA Math-7B Baseline.
     X-axel: genomsnittliga tokens per fråga (compute).
     Y-axel: GSM8K Accuracy (%).
     """
@@ -244,6 +244,7 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     }
 
     labels_added = set()
+    plotted_rows = []
 
     for _, r in df.iterrows():
         mode   = str(r.get("mode", "")).lower()
@@ -251,12 +252,12 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
         acc    = float(r["accuracy"]) * 100
         tokens = float(r.get("avg_tokens", 0))
 
-        # Kategorisera raden — skippa allt utom de tre huvudkategorierna
+        # Strikt filtrering: tillåt ENBART de tre önskade kategorierna
         if "agent" in mode or "agent" in run_id:
             key = "agent"
-        elif "math_baseline" in mode or "math_7b" in run_id:
+        elif "math_baseline" in mode or "math_7b" in run_id or "math7b" in run_id:
             key = "math_7b"
-        elif "3b_10pct" in run_id and "agent" not in mode:
+        elif "3b_10pct" in run_id and "agent" not in mode and "agent" not in run_id:
             key = "3b_10pct"
         else:
             continue
@@ -273,15 +274,18 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
                    edgecolors="black",
                    zorder=3)
 
-        # Annotera alla tre punkterna
+        # Annotera de valda punkterna
         ax.annotate(
-            f"{run_id}\n{acc:.0f}%",
+            f"{r['run_id']}\n{acc:.0f}%",
             xy=(tokens, acc),
             xytext=(8, 4),
             textcoords="offset points",
             fontsize=8,
             color=style["color"],
         )
+        
+        # Spara raden för att synkronisera med textutskriften nedan
+        plotted_rows.append(r)
 
     ax.set_xlabel("Genomsnittligt antal tokens per fråga (Compute)", fontsize=11)
     ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
@@ -295,16 +299,16 @@ def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
 
-    # --- Summaryprint ---
+    # --- Summaryprint (Visar nu exakt samma rader som plottats) ---
     print("\n" + "=" * 60)
     print(f"  {'Modell':<25} {'Acc':>6} {'Tokens/q':>10} {'Tok/correct':>13}")
     print("-" * 60)
-    for _, r in df.sort_values("accuracy", ascending=False).iterrows():
-        run_id = str(r["run_id"])
-        acc    = float(r["accuracy"])
-        tokens = float(r.get("avg_tokens", 0))
-        # Tokens per correct answer = avg_tokens / accuracy
-        # (om acc=0.5 och tokens=300 → 600 tokens spenderas per rätt svar i snitt)
-        tok_per_correct = (tokens / acc) if acc > 0 else float("inf")
-        print(f"  {run_id:<25} {acc*100:>5.1f}%  {tokens:>9.0f}  {tok_per_correct:>12.0f}")
+    if plotted_rows:
+        summary_df = pd.DataFrame(plotted_rows)
+        for _, r in summary_df.sort_values("accuracy", ascending=False).iterrows():
+            run_id = str(r["run_id"])
+            acc    = float(r["accuracy"])
+            tokens = float(r.get("avg_tokens", 0))
+            tok_per_correct = (tokens / acc) if acc > 0 else float("inf")
+            print(f"  {run_id:<25} {acc*100:>5.1f}%  {tokens:>9.0f}  {tok_per_correct:>12.0f}")
     print("=" * 60)
