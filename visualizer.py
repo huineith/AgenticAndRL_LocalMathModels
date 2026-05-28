@@ -13,11 +13,10 @@ import matplotlib.pyplot as plt
 # =====================================================================
 def plot_grpo_training(drive_dir: str, save_path: str = None):
     """
-    Läser metrics.json-filer och normaliserar X-axeln till 'Samples Seen' 
+    Läser metrics/trainer_state-filer och normaliserar X-axeln till 'Samples Seen' 
     för att ge en vetenskapligt korrekt jämförelse av dataeffektivitet.
-    Se till att dina filer heter t.ex. grpo_1_5b_5pct_metrics.json i drive_dir.
+    Söker både i rotkatalogen och i undermappar (t.ex. grpo_1_5b_5pct_best).
     """
-    # Uppdaterad för att explicit inkludera alla varianter av 1.5B och 3B
     EXPECTED_RUNS = [
         ("1_5b", 2), ("1_5b", 4), ("1_5b", 5), ("1_5b", 10),
         ("3b", 2), ("3b", 4), ("3b", 5), ("3b", 10)
@@ -27,7 +26,6 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
     PCT_LABEL = {2: "2.5% Data", 4: "5% Data", 5: "5% Data", 10: "10% Data"}
     SIZE_DISPLAY = {"1_5b": "Qwen2.5-Math-1.5B (GRPO)", "3b": "Qwen2.5-Math-3B (GRPO)"}
 
-    # Uppskattat antal unika frågor per träningssteg (Global Batch Size)
     BATCH_SAMPLES_PER_STEP = 16 
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -40,14 +38,36 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
     file_found = False
     
     for size, pct in EXPECTED_RUNS:
-        filename = f"grpo_{size}_{pct}pct_metrics.json"
-        full_path = os.path.join(drive_dir, filename)
+        # 1. Kolla standardfilen i roten först
+        root_filename = f"grpo_{size}_{pct}pct_metrics.json"
+        full_path = os.path.join(drive_dir, root_filename)
         
+        # 2. Om den inte finns, leta i undermapparna som du listade
         if not os.path.exists(full_path):
-            print(f"  [X] Saknas: {filename}")
+            # Prioriterade mappar att leta i
+            subdirs_to_check = [
+                f"grpo_{size}_{pct}pct_best",
+                f"grpo_{size}_{pct}pct_epoch2",
+                f"grpo_{size}_{pct}pct_epoch1"
+            ]
+            for subdir in subdirs_to_check:
+                subdir_path = os.path.join(drive_dir, subdir)
+                if os.path.exists(subdir_path):
+                    # Hugging Face sparar oftast historiken i 'trainer_state.json'
+                    for possible_json in ["trainer_state.json", "metrics.json"]:
+                        check_file = os.path.join(subdir_path, possible_json)
+                        if os.path.exists(check_file):
+                            full_path = check_file
+                            break
+                if full_path != os.path.join(drive_dir, root_filename): # Hittade en match
+                    break
+
+        # Om vi fortfarande inte hittade något, hoppa över
+        if not os.path.exists(full_path):
+            print(f"  [X] Saknas: grpo_{size}_{pct}pct (Hittade ingen json i roten eller undermappar)")
             continue
             
-        print(f"  [✓] Hittad: {filename} -> Normaliserar axlar...")
+        print(f"  [✓] Hittad data: {os.path.basename(os.path.dirname(full_path)) or 'Roten'}/{os.path.basename(full_path)}")
         file_found = True
         
         with open(full_path, "r") as f:
@@ -56,23 +76,42 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
         ax_reward = plot_mapping[size]["reward"]
         ax_acc = plot_mapping[size]["acc"]
         
-        log_history = metrics.get("log_history", [])
-        
+        # Säkra upp ifall det är en Hugging Face 'trainer_state.json' (som använder log_history direkt i roten)
+        log_history = metrics.get("log_history", metrics) if isinstance(metrics, dict) else metrics
+        if not isinstance(log_history, list) and isinstance(metrics, dict):
+            log_history = metrics.get("log_history", [])
+
         # --- 1. Normalisera Reward-kurvan ---
-        reward_steps = [e["step"] for e in log_history if "reward" in e]
-        rewards = [e["reward"] for e in log_history if "reward" in e]
+        # Olika tränare loggar under olika nycklar (t.ex. 'reward', 'train/reward' eller 'rewards/chosen')
+        reward_steps = []
+        rewards = []
+        for e in log_history:
+            step = e.get("step")
+            # Leta efter belöningsnycklar robust
+            r_val = e.get("reward", e.get("train/reward", e.get("rewards/chosen", None)))
+            if step is not None and r_val is not None:
+                reward_steps.append(step)
+                rewards.append(r_val)
         
         if reward_steps:
             samples_seen_reward = [step * BATCH_SAMPLES_PER_STEP for step in reward_steps]
-            # label=PCT_LABEL[pct] förhindrar duplicerade labels i legend om både 4 och 5% skulle finnas
             ax_reward.plot(samples_seen_reward, rewards, "-", color=PCT_COLOR[pct], 
                            linewidth=1.5, label=PCT_LABEL[pct])
             
         # --- 2. Normalisera Validerings-Accuracy ---
+        # Hämtar antingen din anpassade historik eller kollar i standard log_history
         acc_hist = metrics.get("val_accuracy_history", [])
+        if not acc_hist:
+            # Fallback: kolla om validering/evaluering loggats direkt i historiken
+            for e in log_history:
+                if "eval_accuracy" in e or "val_accuracy" in e:
+                    acc_val = e.get("eval_accuracy", e.get("val_accuracy"))
+                    step_val = e.get("step", 0)
+                    acc_hist.append({"epoch": step_val / 100, "val_accuracy": acc_val}) # grov uppskattning av epok ifall det saknas
+
         if acc_hist:
             epochs = [h["epoch"] for h in acc_hist]
-            accs = [h["val_accuracy"] * 100 for h in acc_hist]
+            accs = [h["val_accuracy"] * (100 if h["val_accuracy"] <= 1.0 else 1) for h in acc_hist]
             
             samples_seen_acc = []
             for ep in epochs:
@@ -97,7 +136,7 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
                         markersize=6, linewidth=2, label=PCT_LABEL[pct])
 
     if not file_found:
-        print(f"\n[FEL] Inga metrics-filer hittades i katalogen: {drive_dir}")
+        print(f"\n[FEL] Inga metrics- eller trainer_state-filer hittades i katalogen: {drive_dir}")
         plt.close()
         return
 
@@ -115,7 +154,6 @@ def plot_grpo_training(drive_dir: str, save_path: str = None):
             ax.set_xlabel("Exponeringar (Samples Seen)")
             ax.grid(True, linestyle="--", alpha=0.5)
             
-            # Snygg hantering av legends för att slippa dubbletter (om t.ex. både 4pct och 5pct råkar laddas)
             handles, labels = ax.get_legend_handles_labels()
             by_label = dict(zip(labels, handles))
             if by_label:
