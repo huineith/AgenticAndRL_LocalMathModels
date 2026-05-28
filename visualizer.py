@@ -254,79 +254,70 @@ def plot_scaling_laws(df: pd.DataFrame, save_path: str = None):
 # =====================================================================
 def plot_agent_compute(df: pd.DataFrame, save_path: str = None):
     """
-    Jämför Agenten, Rå tränad 3B (utan agent) och SOTA Math-7B Baseline.
+    Jämför Agenten, alla tränade modeller (utan agent) och SOTA Math-7B Baseline.
+    X-axel: genomsnittliga tokens per fråga (compute).
+    Y-axel: GSM8K Accuracy (%).
     """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    fig, ax = plt.subplots(figsize=(9, 6))
 
-    # FIX: Spårar vilka labels som redan lagts till för att undvika duplicering i legend
+    # Färg och markör per kategori
+    STYLE = {
+        "agent":    {"color": "#2ecc71", "marker": "o", "s": 150, "label": "Agent Loop (3B 10% + PRM)"},
+        "math_7b":  {"color": "#9b59b6", "marker": "X", "s": 180, "label": "SOTA Baseline (Math-7B)"},
+        "3b_10pct": {"color": "#3498db", "marker": "s", "s": 130, "label": "3B 10% (ingen agent)"},
+        "other":    {"color": "gray",    "marker": ".", "s": 80,  "label": None},
+    }
+
     labels_added = set()
 
     for _, r in df.iterrows():
-        mode = str(r.get("mode", "")).lower()
+        mode   = str(r.get("mode", "")).lower()
         run_id = str(r["run_id"]).lower()
-        acc = float(r["accuracy"]) * 100
-        tokens = r.get("avg_tokens", 0)
+        acc    = float(r["accuracy"]) * 100
+        tokens = float(r.get("avg_tokens", 0))
 
+        # Kategorisera raden
         if "agent" in mode or "agent" in run_id:
-            label = "Agent Loop (3B 10% + PRM)" if "agent_loop" not in labels_added else "_nolegend_"
-            labels_added.add("agent_loop")
-            ax1.scatter(tokens, acc, label=label, color="#2ecc71", marker="o", s=150, edgecolors="black", zorder=3)
+            key = "agent"
         elif "math_baseline" in mode or "math_7b" in run_id:
-            label = "SOTA Baseline (Math-7B)" if "math_7b" not in labels_added else "_nolegend_"
-            labels_added.add("math_7b")
-            ax1.scatter(tokens, acc, label=label, color="#9b59b6", marker="X", s=180, edgecolors="black", zorder=3)
+            key = "math_7b"
         elif "3b_10pct" in run_id and "agent" not in mode:
-            label = "Rå Tränad Bas (3B 10%)" if "3b_10pct" not in labels_added else "_nolegend_"
-            labels_added.add("3b_10pct")
-            ax1.scatter(tokens, acc, label=label, color="#3498db", marker="s", s=130, edgecolors="black", zorder=3)
-        elif "1_5b" in run_id or "3b" in run_id:
-            ax1.scatter(tokens, acc, color="gray", alpha=0.3, marker=".", s=80)
+            key = "3b_10pct"
+        elif "1_5b" in run_id or ("3b" in run_id and "agent" not in mode):
+            key = "other"
+        else:
+            continue
 
-    ax1.set_xlabel("Genomsnittligt antal tokens per fråga (Compute)", fontsize=11)
-    ax1.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
-    ax1.set_title("H2: Test-Time Compute (Agent vs. Rå vs. 7B Baseline)", fontsize=12, fontweight="bold")
-    ax1.grid(True, linestyle="--", alpha=0.5)
-    ax1.legend(loc="lower right", frameon=True)
+        style = STYLE[key]
+        label = style["label"] if (style["label"] and key not in labels_added) else "_nolegend_"
+        labels_added.add(key)
 
-    # PRM Beslutsfördelning Panel 2
-    agent_rows = df[df["mode"].str.lower().str.contains("agent", na=False)].to_dict(orient="records")
-    if not agent_rows:
-        agent_rows = df[df["run_id"].str.contains("agent", case=False)].to_dict(orient="records")
+        ax.scatter(tokens, acc,
+                   label=label,
+                   color=style["color"],
+                   marker=style["marker"],
+                   s=style["s"],
+                   edgecolors="black" if key != "other" else "none",
+                   alpha=0.4 if key == "other" else 1.0,
+                   zorder=3 if key != "other" else 2)
 
-    if agent_rows:
-        colors = ["#2ecc71", "#f1c40f", "#e74c3c"]
-        # FIX: list() istället för range() för att undvika potentiell TypeError i matplotlib
-        x_positions = list(range(len(agent_rows)))
-        bottoms = [0] * len(agent_rows)
+        # Namnge de viktigaste punkterna
+        if key in ("agent", "math_7b", "3b_10pct"):
+            ax.annotate(
+                f"{run_id}\n{acc:.0f}%",
+                xy=(tokens, acc),
+                xytext=(8, 4),
+                textcoords="offset points",
+                fontsize=8,
+                color=style["color"],
+            )
 
-        for idx, status in enumerate(["confident", "unsure", "failed"]):
-            rate_key = f"status_{status}_rate"
-            share_key = f"share_{status}"
-
-            heights = []
-            for r in agent_rows:
-                rate = r.get(rate_key, r.get(share_key, 0.0))
-                total = r.get("total", 50)
-                heights.append(float(rate) * float(total))
-
-            ax2.bar(x_positions, heights, bottom=bottoms, label=status.capitalize(), color=colors[idx], alpha=0.85, width=0.4)
-            bottoms = [b + h for b, h in zip(bottoms, heights)]
-
-        for i, r in enumerate(agent_rows):
-            total_q = r.get("total", 50)
-            ax2.text(i, total_q * 1.02,
-                     f"Acc|Conf: {float(r.get('accuracy_when_confident', 0))*100:.0f}%\nAcc|Unsure: {float(r.get('accuracy_when_unsure', 0))*100:.0f}%",
-                     ha="center", va="bottom", fontsize=9, fontweight="bold")
-
-        ax2.set_xticks(x_positions)
-        ax2.set_xticklabels([r["run_id"] for r in agent_rows])
-        ax2.set_ylabel("Antal frågor", fontsize=11)
-        ax2.set_title("PRM Kalibrering & Beslutsfördelning", fontsize=12, fontweight="bold")
-        ax2.legend(loc="upper right")
-        ax2.grid(True, axis="y", linestyle="--", alpha=0.4)
-        ax2.set_ylim(0, max(int(r.get("total", 50)) for r in agent_rows) * 1.3)
-    else:
-        ax2.text(0.5, 0.5, "Kör bänkmärkningen i 'agent'-läge\nför att se PRM-statistik.", ha="center", va="center", transform=ax2.transAxes)
+    ax.set_xlabel("Genomsnittligt antal tokens per fråga (Compute)", fontsize=11)
+    ax.set_ylabel("GSM8K Accuracy (%)", fontsize=11)
+    ax.set_title("H2: Test-Time Compute — Agent vs. Tränad Bas vs. 7B Baseline",
+                 fontsize=12, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.legend(loc="lower right", frameon=True)
 
     plt.tight_layout()
     if save_path:
